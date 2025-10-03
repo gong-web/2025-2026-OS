@@ -1,0 +1,36 @@
+# RISC-V 工具链（太大，不上传到仓库）
+riscv64-unknown-elf-toolchain-*/
+*.tar.gz
+*.tar.xz
+
+# 编译生成的文件
+*.o
+*.d
+*.elf
+*.img
+*.bin
+*.out
+*~
+
+# 调试文件
+*.gdb
+.gdb_history
+
+# 构建目录
+build/
+obj/
+bin/
+
+# VS Code 配置（可选）
+.vscode/
+
+# macOS
+.DS_Store
+
+# Linux
+*.swp
+*.swo
+
+# 其他临时文件
+*.log
+*.tmp
