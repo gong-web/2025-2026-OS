@@ -47,6 +47,7 @@ REPO_ROOT="${SCRIPT_DIR}"
 
 INSTALL_ROOT="${REPO_ROOT}/riscv_isolated"
 TOOLCHAIN_URL=""
+TOOLCHAIN_DIR_INPUT=""
 QEMU_VERSION="4.1.1"
 BUILD_QEMU=1
 APPEND_BASHRC=0
@@ -73,7 +74,8 @@ usage() {
 while [ $# -gt 0 ]; do
   case "$1" in
     --install-root) INSTALL_ROOT="$2"; shift 2;;
-    --toolchain-url) TOOLCHAIN_URL="$2"; shift 2;;
+  --toolchain-url) TOOLCHAIN_URL="$2"; shift 2;;
+  --toolchain-dir) TOOLCHAIN_DIR_INPUT="$2"; shift 2;;
     --qemu-version) QEMU_VERSION="$2"; shift 2;;
     --no-qemu) BUILD_QEMU=0; shift;;
     --append-bashrc) APPEND_BASHRC=1; shift;;
@@ -85,8 +87,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-if [ -z "${TOOLCHAIN_URL}" ]; then
-  err "--toolchain-url is required (can be a local file path)."; usage
+if [ -z "${TOOLCHAIN_URL}" ] && [ -z "${TOOLCHAIN_DIR_INPUT}" ]; then
+  err "Provide either --toolchain-url (archive) or --toolchain-dir (existing extracted directory)."; usage
 fi
 
 if [ "${CLEAN_FIRST}" -eq 1 ] && [ -d "${INSTALL_ROOT}" ]; then
@@ -104,41 +106,48 @@ DOWNLOADS="${INSTALL_ROOT}/downloads"
 # 1. Acquire toolchain
 ############################################
 info "Toolchain acquisition"
-TOOLCHAIN_ARCHIVE="${TOOLCHAIN_URL}"
-if [[ "${TOOLCHAIN_URL}" =~ ^https?:// ]]; then
-  fname="${TOOLCHAIN_URL##*/}"; fname="${fname%%\?*}" # strip query
-  TOOLCHAIN_ARCHIVE="${DOWNLOADS}/${fname}"
-  if [ ! -f "${TOOLCHAIN_ARCHIVE}" ]; then
-    info "Downloading toolchain: ${TOOLCHAIN_URL}";
-    curl -L --fail -o "${TOOLCHAIN_ARCHIVE}" "${TOOLCHAIN_URL}"
-  else
-    info "Using cached ${TOOLCHAIN_ARCHIVE}";
+if [ -n "${TOOLCHAIN_DIR_INPUT}" ]; then
+  info "Using existing extracted toolchain directory: ${TOOLCHAIN_DIR_INPUT}"
+  if [ ! -d "${TOOLCHAIN_DIR_INPUT}" ]; then
+    err "Specified --toolchain-dir does not exist: ${TOOLCHAIN_DIR_INPUT}"; exit 1
   fi
+  if [ ! -x "${TOOLCHAIN_DIR_INPUT}/bin/riscv64-unknown-elf-gcc" ]; then
+    err "--toolchain-dir missing bin/riscv64-unknown-elf-gcc: ${TOOLCHAIN_DIR_INPUT}"; exit 1
+  fi
+  RISCV_PATH="${TOOLCHAIN_DIR_INPUT}"
 else
-  if [ ! -f "${TOOLCHAIN_ARCHIVE}" ]; then
-    err "Local toolchain archive not found: ${TOOLCHAIN_ARCHIVE}"; exit 1
+  TOOLCHAIN_ARCHIVE="${TOOLCHAIN_URL}"
+  if [[ "${TOOLCHAIN_URL}" =~ ^https?:// ]]; then
+    fname="${TOOLCHAIN_URL##*/}"; fname="${fname%%\?*}" # strip query
+    TOOLCHAIN_ARCHIVE="${DOWNLOADS}/${fname}"
+    if [ ! -f "${TOOLCHAIN_ARCHIVE}" ]; then
+      info "Downloading toolchain: ${TOOLCHAIN_URL}";
+      curl -L --fail -o "${TOOLCHAIN_ARCHIVE}" "${TOOLCHAIN_URL}"
+    else
+      info "Using cached ${TOOLCHAIN_ARCHIVE}";
+    fi
+  else
+    if [ ! -f "${TOOLCHAIN_ARCHIVE}" ]; then
+      err "Local toolchain archive not found: ${TOOLCHAIN_ARCHIVE}"; exit 1
+    fi
   fi
-fi
 
-info "Extracting toolchain..."
-TOOLCHAIN_DIR="${INSTALL_ROOT}/toolchain"
-mkdir -p "${TOOLCHAIN_DIR}"
-
-case "${TOOLCHAIN_ARCHIVE}" in
-  *.tar.gz|*.tgz) tar -xzf "${TOOLCHAIN_ARCHIVE}" -C "${TOOLCHAIN_DIR}" --strip-components=1 || true ;;
-  *.tar.xz) tar -xJf "${TOOLCHAIN_ARCHIVE}" -C "${TOOLCHAIN_DIR}" --strip-components=1 || true ;;
-  *.tar.bz2) tar -xjf "${TOOLCHAIN_ARCHIVE}" -C "${TOOLCHAIN_DIR}" --strip-components=1 || true ;;
-  *) err "Unsupported archive format: ${TOOLCHAIN_ARCHIVE}"; exit 1 ;;
-esac
-
-if [ ! -x "${TOOLCHAIN_DIR}/bin/riscv64-unknown-elf-gcc" ]; then
-  # Try unstripping if strip-components failed due to unknown layout
-  if [ -z "$(find "${TOOLCHAIN_DIR}" -maxdepth 1 -type f -name riscv64-unknown-elf-gcc 2>/dev/null)" ]; then
-    err "riscv64-unknown-elf-gcc not found after extraction. Inspect archive layout."; exit 1
+  info "Extracting toolchain..."
+  TOOLCHAIN_DIR="${INSTALL_ROOT}/toolchain"
+  mkdir -p "${TOOLCHAIN_DIR}"
+  case "${TOOLCHAIN_ARCHIVE}" in
+    *.tar.gz|*.tgz) tar -xzf "${TOOLCHAIN_ARCHIVE}" -C "${TOOLCHAIN_DIR}" --strip-components=1 || true ;;
+    *.tar.xz) tar -xJf "${TOOLCHAIN_ARCHIVE}" -C "${TOOLCHAIN_DIR}" --strip-components=1 || true ;;
+    *.tar.bz2) tar -xjf "${TOOLCHAIN_ARCHIVE}" -C "${TOOLCHAIN_DIR}" --strip-components=1 || true ;;
+    *) err "Unsupported archive format: ${TOOLCHAIN_ARCHIVE}"; exit 1 ;;
+  esac
+  if [ ! -x "${TOOLCHAIN_DIR}/bin/riscv64-unknown-elf-gcc" ]; then
+    if [ -z "$(find "${TOOLCHAIN_DIR}" -maxdepth 1 -type f -name riscv64-unknown-elf-gcc 2>/dev/null)" ]; then
+      err "riscv64-unknown-elf-gcc not found after extraction. Inspect archive layout."; exit 1
+    fi
   fi
+  RISCV_PATH="${TOOLCHAIN_DIR}"
 fi
-
-RISCV_PATH="${TOOLCHAIN_DIR}"
 
 ############################################
 # 2. Build QEMU (optional)
