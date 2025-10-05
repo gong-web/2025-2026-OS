@@ -1,0 +1,9 @@
+# 构建与下载缓存
+sources/
+build-qemu/
+toolchain/
+qemu/
+*.tar.gz
+*.tar.xz
+*.tgz
+*.log

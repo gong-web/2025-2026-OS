@@ -4,7 +4,8 @@
 # 使用方法: source setup_os_env.sh
 
 # 保存原始环境变量(如果需要恢复)
-if [ -z "$ORIGINAL_PATH" ]; then
+# 使用 ${VAR:-} 形式避免在 set -u 环境下出现未绑定变量错误
+if [ -z "${ORIGINAL_PATH:-}" ]; then
     export ORIGINAL_PATH="$PATH"
 fi
 
