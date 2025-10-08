@@ -482,14 +482,6 @@ Find the GDB manual and other documentation resources online at:
 
 打开一个新的终端，执行make 运行QEMU。这里QEMU为“被调试的目标”，它按照我们的要求启动内核，然后在某个端口上等待；同时，我们使用GDB调试器，去连接QEMU，让GDB向我们报告QEMU内部虚拟CPU的一举一动，可以像调试普通程序一样调试内核。
 
-> [!NOTE]
->
-> 在本实验中，我将 QEMU 启动参数 `-kernel $(kernel)` 替换了
->
->  `-device loader,file=$(UCOREIMG),addr=0x80200000` 。
->
-> 目的是为了更准确地模拟实际硬件启动过程并确保观察到完整的启动链。这两种方式在内核加载机制上有本质区别：前者仅简单地将裸二进制映像（ucore.img）复制到指定物理地址，但 OpenSBI 固件无法识别这是一个可执行内核，因此不会自动跳转执行；而后者加载的是保留了完整元信息的 ELF 格式内核文件，QEMU 会解析其中的段头和入口点信息，并通过固件接口告知 OpenSBI 内核的存在及其入口地址。这使得 OpenSBI 能够正确设置 mepc 寄存器指向 0x80200000，并通过 mret 指令从 M 特权级切换到 S 特权级同时跳转到内核入口。采用 **-kernel** 参数确保了我能观察到完整的特权级切换过程和 CPU 从固件到内核的控制权转移，这对于验证 RISC-V 的启动流程至关重要。
-
 #### 从0x1000处执行初始化固件的汇编代码
 
 ```assembly
