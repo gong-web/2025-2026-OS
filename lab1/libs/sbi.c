@@ -15,7 +15,7 @@ uint64_t SBI_SHUTDOWN = 8;
 
 uint64_t sbi_call(uint64_t sbi_type, uint64_t arg0, uint64_t arg1, uint64_t arg2) {
     uint64_t ret_val;
-    __asm__ volatile (
+    __asm__ volatile (  
         "mv x17, %[sbi_type]\n"
         "mv x10, %[arg0]\n"
         "mv x11, %[arg1]\n"
