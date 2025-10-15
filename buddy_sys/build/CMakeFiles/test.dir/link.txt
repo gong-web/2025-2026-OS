@@ -1,0 +1,1 @@
+/usr/bin/c++  -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/test.dir/test.cpp.o CMakeFiles/test.dir/src/buddy_system.cpp.o -o test
