@@ -1,3 +1,520 @@
+# Buddy System 设计思路文档
+
+一个用C++实现的伙伴系统内存管理器。
+
+## 项目结构
+
+```
+OS_lab/
+├── CMakeLists.txt          # CMake构建文件
+├── test.cpp               # 测试程序
+├── include/               # 头文件目录
+│   ├── buddy_system.h     # 伙伴系统头文件
+│   └── index_caculate.h   # 索引计算头文件
+└── src/                   # 源文件目录
+    └── buddy_system.cpp   # 伙伴系统实现
+```
+
+## 构建和运行
+
+### 使用CMake（推荐）
+
+```bash
+# 创建构建目录
+mkdir build && cd build
+
+# 配置项目
+cmake ..
+
+# 编译
+make
+
+# 运行测试
+./test
+```
+
+## 功能特性
+
+- 内存分配和释放
+- 自动内存合并
+- 内存大小查询
+- 可视化内存树显示
+- 支持0字节分配（转换为1字节）
+
+## 详细设计思路
+
+### 代码实现详解
+
+#### 1. 数据结构定义
+
+```cpp
+struct buddy_st {
+    int level;              // 最大层级，决定总内存大小
+    unsigned char tree[];   // 柔性数组，存储二叉树节点状态
+};
+```
+
+**代码讲解**：
+这个结构体是整个伙伴系统的核心数据结构。`level`字段表示二叉树的最大层级，决定了总内存大小（2^level字节）。`tree[]`是一个柔性数组，用于存储二叉树中每个节点的状态。柔性数组的设计非常巧妙，它允许我们在分配结构体时同时分配数组空间，实现零内存浪费。
+
+**设计要点**：
+
+- 总节点数：`2 * (1 << level) - 1`（完全二叉树的节点数公式）
+- 内存大小：`1 << level` 字节
+- 每个节点用1个字节存储状态，内存效率高
+
+#### 2. 节点状态系统
+
+```cpp
+#define NODE_UNUSED 0    // 未使用
+#define NODE_USED 1      // 已使用（只有叶子节点可能）
+#define NODE_SPLIT 2     // 已分割
+#define NODE_FULL 3      // 已满
+```
+
+**状态转换规则**：
+
+- 只有叶子节点可能为`NODE_USED`状态
+- 内部节点只能是`NODE_UNUSED`、`NODE_SPLIT`或`NODE_FULL`
+
+#### 3. 内存分配算法 (`buddy_alloc`)
+
+**步骤1：大小对齐**
+
+```cpp
+if(size_needed == 0){
+    size_to_alloc = 1;  // 0字节转换为1字节
+} else {
+    size_to_alloc = next_pow_of_2(size_needed);  // 向上舍入到2的幂次
+}
+```
+
+**代码讲解**：
+伙伴系统要求所有内存块都是2的幂次大小，因此需要将请求大小向上舍入。这里处理了边界情况：0字节请求被转换为1字节。`next_pow_of_2`函数使用位运算快速计算大于等于输入值的最小2的幂次，例如7会被舍入到8，15会被舍入到16。
+
+**步骤2：深度优先搜索**
+
+```cpp
+while(true) {
+    if(size_to_alloc == cur_length) {
+        // 找到合适大小的块，尝试分配
+        if(buddy->tree[cur_index] == NODE_UNUSED) {
+            buddy->tree[cur_index] = NODE_USED;
+            _mark_parent(buddy, cur_index);
+            return index2offset(cur_index, cur_level, buddy->level);
+        }
+    } else if(size_to_alloc < cur_length) {
+        // 块太大，需要分割
+        if(buddy->tree[cur_index] == NODE_UNUSED) {
+            buddy->tree[cur_index] = NODE_SPLIT;
+            cur_index = left_child_index(cur_index);
+            cur_length /= 2;
+            continue;
+        }
+    }
+    // 回溯和右移逻辑...
+}
+```
+
+**代码讲解**：
+这是分配算法的核心搜索逻辑。算法采用深度优先搜索策略，优先分配最左侧的可用块。当找到合适大小的块时，将其标记为`NODE_USED`并返回偏移量。当块太大时，将其标记为`NODE_SPLIT`并继续向左子节点搜索。这种策略确保了内存分配的局部性，减少了碎片。
+
+**步骤3：父节点状态更新 (`_mark_parent`)**
+
+```cpp
+while(true) {
+    int brother_node_index = brother_index(index);
+    if(兄弟节点也被使用) {
+        index = parent_index(index);
+        buddy->tree[index] = NODE_FULL;
+    } else {
+        break;  // 停止向上更新
+    }
+}
+```
+
+**代码讲解**：
+当分配一个节点后，需要向上更新父节点的状态。如果兄弟节点也被使用，则父节点应该标记为`NODE_FULL`，表示其所有子节点都被使用。这个函数会递归向上检查，直到遇到无法合并的节点为止。这种状态维护机制确保了树结构的一致性。
+
+#### 4. 内存释放算法 (`buddy_free`)
+
+**步骤1：定位节点**
+
+```cpp
+while(true) {
+    if(buddy->tree[cur_index] == NODE_USED) {
+        // 找到目标节点
+        _combine_parent(buddy, cur_index);
+        return;
+    } else if(buddy->tree[cur_index] == NODE_SPLIT || buddy->tree[cur_index] == NODE_FULL) {
+        // 继续向下搜索
+        if(offset < left + cur_length) {
+            cur_index = left_child_index(cur_index);
+        } else {
+            cur_index = right_child_index(cur_index);
+            left += cur_length;
+        }
+    }
+}
+```
+
+**代码讲解**：
+释放算法首先需要定位到要释放的节点。通过比较偏移量和当前块的范围，算法可以确定目标节点在左子树还是右子树中。这种搜索方式的时间复杂度是O(log n)，非常高效。
+
+**步骤2：节点合并 (`_combine_parent`)**
+
+```cpp
+while(true) {
+    int buddy = index - 1 + (index & 1) * 2;  // 计算兄弟节点
+    if(buddy < 0 || self->tree[buddy] != NODE_UNUSED) {
+        // 无法合并，标记为未使用
+        self->tree[index] = NODE_UNUSED;
+        // 向上更新父节点状态
+        while(((index = parent_index(index)) >= 0) && self->tree[index] == NODE_FULL) {
+            self->tree[index] = NODE_SPLIT;
+        }
+        return;
+    }
+    index = parent_index(index);  // 继续向上合并
+}
+```
+
+**代码讲解**：
+这是伙伴系统的核心特性：相邻的空闲块会自动合并。算法首先计算兄弟节点的索引，如果兄弟节点也是空闲的，则向上合并到父节点。合并过程会递归进行，直到无法继续合并为止。
+
+#### 5. 索引计算系统
+
+**核心转换函数**：
+
+```cpp
+// 节点索引转内存偏移量
+int index2offset(int index, int level, int max_level) {
+    return ((index + 1) - (1 << level)) << (max_level - level);
+}
+
+// 内存偏移量转节点索引
+int offset2index(int offset, int level, int max_level) {
+    return ((offset + (1 << level)) - 1) >> (max_level - level);
+}
+```
+
+**代码讲解**：
+这两个函数是索引系统的核心，用于在二叉树节点索引和内存偏移量之间进行转换。`index2offset`将节点索引转换为对应的内存偏移量，`offset2index`则相反。这些函数使用位运算优化，避免了除法运算，性能极高。
+
+**树遍历辅助函数**：
+
+```cpp
+int parent_index(int index)      // 父节点索引
+int left_child_index(int index)  // 左子节点索引
+int right_child_index(int index) // 右子节点索引
+int brother_index(int index)     // 兄弟节点索引
+```
+
+**代码讲解**：
+这些辅助函数提供了树遍历的基本操作。它们都使用简单的数学公式计算，例如左子节点索引为`index * 2 + 1`，右子节点索引为`index * 2 + 2`。这些函数使得树遍历操作变得简洁高效。
+
+#### 6. 可视化系统 (`buddy_show`)
+
+```cpp
+void _show(struct buddy_st *self, int index, int level) {
+    switch(self->tree[index]) {
+        case NODE_UNUSED:
+            printf("(%d:%d)", offset, size);  // (偏移:大小)
+            break;
+        case NODE_USED:
+            printf("[%d:%d]", offset, size);  // [偏移:大小]
+            break;
+        case NODE_FULL:
+            printf("{");  // 递归显示子节点
+            _show(self, left_child, level + 1);
+            _show(self, right_child, level + 1);
+            printf("}");
+            break;
+        default:  // NODE_SPLIT
+            printf("(");  // 递归显示子节点
+            _show(self, left_child, level + 1);
+            _show(self, right_child, level + 1);
+            printf(")");
+            break;
+    }
+}
+```
+
+**代码讲解**：
+这个可视化系统使用递归方式显示整个内存树的状态。不同的符号表示不同的节点状态：`()`表示未使用块，`[]`表示已使用块，`{}`表示满节点，`()`表示分割节点。这种可视化方式使得调试和验证变得非常直观，可以清楚地看到内存的分配和释放过程。
+
+
+#### 7. 2的幂次计算
+
+```cpp
+static inline int is_pow_of_2(int x){
+    return !(x & (x - 1));
+}
+
+static inline int next_pow_of_2(int x){ // 把右侧所有位都变成1
+    if (is_pow_of_2(x)) 
+        return x;
+    x |= x >> 1;
+    x |= x >> 2;
+    x |= x >> 4;
+    x |= x >> 8;
+    x |= x >> 16;
+    return x + 1;
+}
+```
+
+**代码讲解**：
+这两个函数是伙伴系统的关键工具函数，用于处理2的幂次计算。
+
+`is_pow_of_2`函数使用位运算技巧快速判断一个数是否为2的幂次。原理是：如果x是2的幂次，那么x的二进制表示中只有一个1，而x-1会将这个1变为0，并将右边的所有0变为1。因此`x & (x-1)`的结果为0，取反后返回1。
+
+`next_pow_of_2`函数计算大于等于x的最小2的幂次。算法使用位运算技巧：通过一系列右移和或运算，将x的最高位1右边的所有位都设置为1，然后加1得到下一个2的幂次。例如，对于x=7（二进制111），经过运算后得到15（二进制1111），加1后得到16（二进制10000）。
+
+**性能优势**：
+
+- 使用位运算，避免了循环和除法运算
+- 时间复杂度为O(1)，性能极高
+- 内联函数设计，减少函数调用开销
+
+
+### 整体设计思路总结
+
+#### 核心思想
+
+1. **二叉树映射**：将内存空间映射到完全二叉树，每个节点代表一个内存块
+2. **状态驱动**：通过节点状态精确描述内存使用情况
+3. **递归操作**：分配和释放都采用递归策略，自动维护树结构一致性
+
+#### 算法特点
+
+- **时间复杂度**：O(log n)，其中n是内存池大小
+- **空间效率**：使用柔性数组，零内存浪费
+- **内存对齐**：自动向上舍入到2的幂次，减少碎片
+- **缓存友好**：连续的内存访问模式
+
+
+## 测试说明
+
+
+### 完整测试流程
+
+测试程序包含7个测试用例，验证了伙伴系统的各种功能：
+
+1. 基本分配功能
+2. 大块分配
+3. 小块分配
+4. 中等块分配
+5. 内存释放和合并
+6. 最大分配测试
+7. 边界情况测试
+
+### 详细结果分析
+
+#### 测试1：基本分配功能
+
+**测试代码**：
+
+```cpp
+int m1 = test_alloc(b, 4);  // 分配4字节
+test_size(b, m1);           // 验证大小
+```
+
+**预期结果**：
+
+```
+alloc at offset: 0 (sz= 4)
+((([0:4](4:4))(8:8))(16:16))
+size 0 (sz = 4)
+```
+
+**结果分析**：
+
+- 成功分配4字节内存，返回偏移量0
+- 内存树显示：`[0:4]`表示0-3字节被分配，其余部分保持空闲
+- 大小查询返回4，验证分配正确
+- 系统将32字节内存分割为4个8字节块，然后进一步分割第一个8字节块
+
+#### 测试2：大块分配
+
+**测试代码**：
+
+```cpp
+int m2 = test_alloc(b, 9);  // 分配9字节，向上舍入到16字节
+test_size(b, m2);
+```
+
+**预期结果**：
+
+```
+alloc at offset: 16 (sz= 9)
+((([0:4](4:4))(8:8))[16:16])
+size 16 (sz = 16)
+```
+
+**结果分析**：
+
+- 请求9字节，系统向上舍入到16字节（2^4）
+- 分配在偏移量16处，占用16-31字节
+- 内存树显示：`[16:16]`表示16字节块被完全使用
+- 实际分配大小是16字节，符合伙伴系统的2的幂次要求
+
+#### 测试3：小块分配
+
+**测试代码**：
+
+```cpp
+int m3 = test_alloc(b, 3);  // 分配3字节，向上舍入到4字节
+test_size(b, m3);
+```
+
+**预期结果**：
+
+```
+alloc at offset: 4 (sz= 3)
+(({[0:4][4:4]}(8:8))[16:16])
+size 4 (sz = 4)
+```
+
+**结果分析**：
+
+- 请求3字节，系统向上舍入到4字节（2^2）
+- 分配在偏移量4处，占用4-7字节
+- 内存树显示：`[4:4]`表示4字节块被使用
+- 父节点变为`{}`，表示其子节点都被使用
+
+#### 测试4：中等块分配
+
+**测试代码**：
+
+```cpp
+int m4 = test_alloc(b, 7);  // 分配7字节，向上舍入到8字节
+```
+
+**预期结果**：
+
+```
+alloc at offset: 8 (sz= 7)
+{{{[0:4][4:4]}[8:8]}[16:16]}
+```
+
+**结果分析**：
+
+- 请求7字节，系统向上舍入到8字节（2^3）
+- 分配在偏移量8处，占用8-15字节
+- 内存树显示：`[8:8]`表示8字节块被使用
+- 根节点变为`{}`，表示整个内存树都被分割
+
+#### 测试5：内存释放和合并
+
+**测试代码**：
+
+```cpp
+test_free(b, m3);  // 释放3字节块
+test_free(b, m1);  // 释放4字节块，测试相邻块合并
+test_free(b, m4);  // 释放8字节块
+test_free(b, m2);  // 释放16字节块，测试完全合并
+```
+
+**预期结果**：
+
+```
+free 4
+((([0:4](4:4))[8:8])[16:16])
+free 0
+(((0:8)[8:8])[16:16])
+free 8
+((0:16)[16:16])
+free 16
+(0:32)
+```
+
+**结果分析**：
+
+- **释放m3（偏移4）**：4字节块被释放，父节点从`{}`变为`()`
+- **释放m1（偏移0）**：0-3字节被释放，与4-7字节合并成8字节块`(0:8)`
+- **释放m4（偏移8）**：8-15字节被释放，与0-7字节合并成16字节块`(0:16)`
+- **释放m2（偏移16）**：16-31字节被释放，与0-15字节合并成完整的32字节`(0:32)`
+- 验证了伙伴系统的核心特性：相邻空闲块自动合并
+
+#### 测试6：最大分配测试
+
+**测试代码**：
+
+```cpp
+int m5 = test_alloc(b, 32);  // 分配整个32字节
+test_free(b, m5);            // 立即释放
+```
+
+**预期结果**：
+
+```
+alloc at offset: 0 (sz= 32)
+[0:32]
+free 0
+(0:32)
+```
+
+**结果分析**：
+
+- 成功分配整个32字节内存空间
+- 内存树显示：`[0:32]`表示整个内存被使用
+- 立即释放后恢复为空闲状态`(0:32)`
+- 验证了系统的最大分配能力
+
+#### 测试7：边界情况测试
+
+**测试代码**：
+
+```cpp
+int m6 = test_alloc(b, 0);  // 分配0字节，转换为1字节
+test_free(b, m6);           // 释放1字节块
+```
+
+**预期结果**：
+
+```
+alloc at offset: 4 (sz= 0)
+((([0:4](([4:1](5:1))(6:2)))[8:8])[16:16])
+free 4
+((([0:4](4:4))[8:8])[16:16])
+```
+
+**结果分析**：
+
+- 0字节请求被转换为1字节（最小分配单位）
+- 系统分配了1字节内存，但实际占用4字节（最小块大小）
+- 内存树显示复杂的嵌套结构，体现了精细的内存分割
+- 释放后恢复到之前的状态
+- 验证了边界情况的正确处理
+
+### 测试结果总结
+
+**内存分配效率**：
+
+- 所有分配请求都成功处理
+- 大小向上舍入符合伙伴系统要求
+- 分配策略优先使用左侧内存，保持局部性
+
+**内存合并效果**：
+
+- 相邻空闲块能够正确合并
+- 释放顺序影响合并效果
+- 最终能够完全回收所有内存
+
+**系统稳定性**：
+
+- 边界情况（0字节）得到正确处理
+- 最大分配测试验证了系统容量
+- 内存树状态始终保持一致性
+
+**性能表现**：
+
+- 分配和释放操作都是O(log n)时间复杂度
+- 内存利用率较高，碎片较少
+- 可视化输出清晰，便于调试和验证
+
+# slab 设计思路文档
+
 ## 概念与辨析
 
 slab分配器的设计基于对象缓存理念。它使用预分配的对象缓存池——通过页分配器预留若干页框，将其分割为对象并维护相关元数据。这些元数据既用于遍历对象链表，也记录对象状态信息。显然该理念存在多种实现方式，不同环境适用不同方案。
@@ -12,131 +529,76 @@ slab分配器的设计基于对象缓存理念。它使用预分配的对象缓�
 
 关键参数： DRAM_BASE = 0x80000000   (物理内存起始地址) nbase = 0x80000000 >> 12 = 0x80000 (起始页框号)
 
-**三级缓存架构**
-
-**CPU本地缓存（Per-CPU Cache）**
-
-```c
-// 定义：每个CPU核心独立的内存缓存，避免锁竞争
-struct kmem_cache_cpu {
-    void *freelist;           // 指向下一个空闲对象
-    struct Page *page;        // 当前活跃的slab页
-    unsigned int freelist_count; // 本地缓存中的对象数量
-};
-```
-
-- **目的**：实现无锁快速分配
-- **特性**：处理器亲和性，数据在CPU本地缓存中
-
-**节点缓存（Node Cache）**
-
-```c
-// 定义：NUMA节点级别的共享缓存
-struct kmem_cache_node {
-    struct list_head partial; // 部分空闲slab链表
-    unsigned long nr_partial; // partial slab数量
-    spinlock_t list_lock;     // 保护链表的锁
-};
-```
-
-- **目的**：在CPU缓存和物理内存间缓冲
-- **作用**：CPU缓存的"后备仓库"
-
-**物理内存管理器（PMM）**
-
-```c
-// 定义：底层页分配器（如伙伴系统）
-struct pmm_manager {
-    const char *name;
-    void (*init)(void);           // 初始化
-    struct Page *(*alloc_pages)(size_t n); // 分配页
-    void (*free_pages)(struct Page *page, size_t n); // 释放页
-};
-```
-
-- **角色**：slab分配器的内存供应商
-- **粒度**：以物理页为单位分配和释放
-
 ## slab
 
-### SLUB分配器的slab对象布局
+从高层次来看，SLUB 分配器有 3 个主要部分：**缓存**、**slab**和**对象**。特定类型或大小的**对象**（即内核分配的内容）被组织到**缓存**中。属于**缓存的对象**被进一步分组为**slab**， 其具有固定大小并包含固定数量的**对象。**在此上下文中，对象**只是特定大小的分配**。除此之外，缓存还会持续监控哪些 slab 已满、哪些 slab 部分已满以及哪些 slab 为空。slab 中的空闲对象会形成一个链表，指向该 slab 中的下一个空闲对象。因此，当内核想要通过 SLUB 分配器进行分配时，它将找到正确的缓存（取决于类型/大小），然后找到部分 slab 来分配该对象。
 
-其中只有“对象内容”是始终存在的。这是slab对象的实际有效载荷。其他字段的存在与否取决于已启用的SLUB调试选项。每个slab缓存都由一个kmem_cache对象表示，该对象包含slab缓存管理所需的所有信息。将要分配的空闲对象保存在一个名为“freelist”的列表中，下一个空闲对象由“空闲指针（FP）”指向。这个空闲指针通常位于对象的开头。FP在对象中的位置可能会根据内核版本和/或调试选项而变化，但它始终存在于为对象分配的区域内的某个位置。让我们看一下上面图中提到的每个字段。
+![image-20251014222150563](assets/image-20251014222150563.png)
+
+### 数据结构
+
+其中只有“对象内容”是始终存在的。这是slab对象的实际有效载荷。其他字段的存在与否取决于已启用的SLUB调试选项。**每个slab缓存都由一个kmem_cache对象表示，该对象包含slab缓存管理所需的所有信息。**将要分配的空闲对象保存在一个名为**“freelist”**的列表中，下一个空闲对象由“空闲指针（FP）”指向。这个空闲指针通常位于对象的开头。FP在对象中的位置可能会根据内核版本和/或调试选项而变化，但它始终存在于为对象分配的区域内的某个位置。让我们看一下上面图中提到的每个字段。非本次实验的重点不再详细介绍。
 
 ![image-20251014213311260](assets/image-20251014213311260.png)
 
-REDZONE left padding
-
-当启用了RED分区调试选项（slub_debug = Z）时，此字段就会出现。如果启用，它位于对象的开头。kmem_cache→red_left_pad表示此字段的大小。实际的对象内容位于从对象地址开始偏移kmem_cache→red_left_pad的位置。此外，当此字段存在于slab缓存中时，空闲指针（指向下一个空闲对象的指针）并不指向对象的起始地址，而是指向从对象地址开始偏移kmem_cache→red_left_pad的位置。这使得SLUB分配器的客户端能够无缝地使用从SLUB分配器获得的地址。
-
-Object payload
-
-该字段始终存在，并承载对象的实际有效载荷。如果未启用任何调试选项，则slub对象仅由这部分组成。此部分的大小为kmem_cache→object_size。
-
-REDZONE
-
-同样，该字段仅在启用了 slub_debug=Z 选项时才会出现。kmem_cache 中没有显式字段来指示该字段的大小，通常其大小为 sizeof(void\*)，这种情况发生在 kmem_cache→ object_size 与 sizeof(void*) 对齐时。否则，在对象内容结束和元数据区域开始之间会留下一些空间，该空间被用作 REDZONE。
-
-Metadata
-
-该字段的存在及其内容也取决于调试选项。它可能包含以下一条或多条信息：
-
-Freepointer（空闲指针）
-
-Slub分配追踪器（struct track）
-
-Kasan分配元数据
-
-由于该字段的存在取决于特定的调试选项，我们将在后续关于不同SLUB调试机制的文章中，针对不同调试选项详细分析该字段的内容。
-
 ### SLUB分配器的slab缓存布局
 
-每个slab缓存由一个或多个slab组成。每个slab又由一个或多个页面组成，这些页面包含固定大小的对象。对于由多个页面组成的slab，会使用复合页面。因此，一个slab由一个普通页面或一个复合页面组成。slab和对象都被组织成链表，并且有多个slab和对象的链表。下图展示了一个slab缓存的顶层视图：
+每个 **slab 缓存（slab cache）** 由一个或多个 **slab** 组成。
+每个 slab 又由一个或多个 **页面（page）** 构成，这些页面用于存放固定大小的对象（object）。
+当一个 slab 由多个页面组成时，会使用 **复合页面（compound page）**，因此一个 slab 实际上对应一个普通页面或一个复合页面。
+
+slab 与对象均以链表形式组织，系统维护了多个 slab 和对象的链表。
+下图展示了一个 slab 缓存的顶层结构：
 
 ![image-20251014214407775](assets/image-20251014214407775.png)
 
-每个slab缓存由一个kmem_cache对象表示，每个kmem_cache对象都有一个指向kmem_cache_cpu对象的每CPU指针（cpu_slab）。kmem_cache_cpu对象保存着slab缓存的每CPU信息。每个slab由一个slab对象表示。kmem_cache_node表示slab分配器使用的内存节点。slab内的对象以链表形式维护，slab（或page）对象的freelist成员指向该链表的第一个空闲对象。下图展示了一个slab的布局：
+每个 slab 缓存由一个 **kmem_cache** 对象表示。`kmem_cache` 中包含指向每 CPU 缓存结构的指针 **cpu_slab**，该指针指向一个 **kmem_cache_cpu** 对象，后者保存了当前 CPU 上的 slab 缓存信息。
+每个 slab 则由一个 **slab 对象** 表示，而 **kmem_cache_node** 表示分配器使用的内存节点（NUMA node）。在 slab 内，对象以链表形式维护。 `slab`（或 `page`）对象中的 `freelist` 成员指向该 slab 中的**第一个空闲对象**。下图展示了一个 slab 的内部布局：
 
 ![image-20251014214637974](assets/image-20251014214637974.png)
 
-每个slab缓存都有一个每CPU的活动slab（kmem_cache.cpu_slabs.slab或kmem_cache.cpu_slabs.page）、一个每CPU的部分slab列表（kmem_cache.cpu_slabs.partial，取决于配置选项）以及一个每节点的部分slab列表kmem_cache.nodes[node_no].partial。每CPU部分slab列表中的slab通过slab.next连接，而每节点部分slab列表中的slab则通过slab.slab_list连接。
+每个 slab 缓存维护多个层级的 slab 列表：
 
-对象总是从每CPU的活动slab中分配。当活动slab的所有对象都被分配后，将从其他slab中的第一个对象作为分配对象返回，并且该slab成为活动slab。每个slab缓存还包含一个每CPU的空闲列表（kmem_cache.cpu_slabs.freelist），由活动slab上的对象组成。因此，活动slab上的对象在任何时候都可能位于两个列表之一：无锁空闲列表（kmem_cache_cpu.cpu_slabs.freelist）或常规空闲列表（slab/page.freelist）。在支持使用cmpxchg交换两个字的架构（如x86_64、aarch64等）上，从无锁空闲列表分配对象或释放到无锁空闲列表可以在不获取任何锁、不禁止中断和抢占的情况下完成。对象分配总是首先尝试从无锁空闲列表进行。并非所有涉及slab对象和slab的操作都可以无锁方式完成。例如，操作slab的常规空闲列表（即slab.freelist）、slab列表等需要加锁。
+- **CPU 活动 slab**：`kmem_cache.cpu_slab.slab`
+- **每 CPU 的部分 slab 列表**：`kmem_cache.cpu_slab.partial`（取决于配置选项）
+- **每节点的部分 slab 列表**：`kmem_cache.nodes.partial`
 
-SLUB分配器使用以下锁机制：
+在 CPU 层面的部分 slab 列表中，slab 之间通过 `slab.next` 连接；在节点层面的部分 slab 列表中，则通过 `slab.slab_list` 连接。
 
-slab_mutex：全局互斥锁，用于保护slab缓存列表（即slab_caches），同步对slab缓存结构的元数据修改，以及同步内存热插拔回调。
+对象**总是从 CPU 的活动 slab 中分配**。当活动 slab 的对象全部分配完毕后，系统会选择其他 slab 中的第一个空闲对象，并将该 slab 设为新的活动 slab。
 
-kmem_cache_node→list_lock：自旋锁，保护每个节点上的部分和完整slab列表，同时保护部分slab计数器。由于该锁是集中式的（基于每个节点而非每个CPU），因此会带来显著的性能开销。
+每个 slab 缓存还包含一个每 CPU 的空闲对象列表（`kmem_cache.cpu_slab.freelist`），该列表由活动 slab 上的空闲对象组成。因此，活动 slab 上的对象可能同时出现在两个不同的空闲列表中：
 
-kmem_cache_cpu→lock：自旋锁，保护每CPU的kmem_cache_cpu结构（即kmem_cache.cpu_slab），防止同一CPU上的抢占或中断。
+- 无锁空闲列表：`kmem_cache_cpu.freelist`
+- 常规空闲列表：`slab/page.freelist`
 
-slab_lock(slab)：页锁的封装，本质上是一个位自旋锁，用于保护slab的空闲列表、使用中对象计数、对象数组以及冻结属性。当无法使用cmpxchg指令操作这些属性时（由于底层架构不支持或启用了某些SLUB调试选项）需要使用此锁。
+在支持双字原子交换（如 **x86_64**、**aarch64**）的体系结构上，对无锁空闲列表的对象分配和释放可在**不加锁、不屏蔽中断、不禁止抢占**的情况下完成。分配时总是优先尝试从无锁空闲列表获取对象。
 
-object_map_lock：全局自旋锁，仅在调试情况下使用。
+并非所有涉及 slab 对象的操作都可以无锁完成。例如，对常规空闲列表（`slab.freelist`）、slab 列表等的修改仍需加锁。
+
+SLUB 分配器使用以下几种锁来确保并发安全：
+
+- **slab_mutex**：全局互斥锁，保护 slab 缓存列表（`slab_caches`），用于同步缓存结构的元数据修改和内存热插拔回调。
+- **kmem_cache_node→list_lock**：节点级自旋锁，保护每个节点的部分及完整 slab 列表及其计数器。该锁为集中式锁（按节点而非 CPU），可能造成一定性能开销。
+- **kmem_cache_cpu→lock**：每 CPU 的自旋锁，保护 `kmem_cache_cpu` 结构（即 `kmem_cache.cpu_slab`），防止同一 CPU 上的中断或抢占干扰。
+- **slab_lock(slab)**：封装自页锁的位自旋锁，用于保护 slab 的空闲列表、在用对象计数、对象数组及冻结属性。当底层架构不支持 cmpxchg 操作，或启用了 SLUB 调试选项时，需要使用该锁。
+- **object_map_lock**：全局自旋锁，仅在调试模式下使用。
 
 ![image-20251014214950989](assets/image-20251014214950989.png)
 
-从上述内容可以看出，kmem_cache_cpu.freelist和kmem_cache_cpu.slab.freelist都指向活跃slab上的对象，虽然这两个列表由同一slab（即当前活跃slab）中的对象组成，但它们是两个不同的列表。我们将在后续探讨对象分配机制时更深入地理解这两个列表。
+从上图可以看出，`kmem_cache_cpu.freelist` 与 `kmem_cache_cpu.slab.freelist` 都指向当前活动 slab 上的对象。它们引用的对象属于同一 slab，但属于两个不同的链表。在后续的对象分配机制中，我们将更深入地分析这两者的区别与交互。
 
-一个slab可以是满的、部分满的或空的。满slab的所有对象都已分配，而空slab的所有对象都处于空闲状态。如果需要，空slab可以被销毁/回收，底层页面可以返回给页面分配器。一个slab可以作为每CPU活跃slab，也可以存在于每CPU部分slab列表中，或者存在于每节点部分slab列表中。任何部分列表中的slab要么是部分空的，要么是完全空的。满slab不会出现在上述任何列表中。没有必要维护满slab的列表（除了slub调试），因为当从满slab中释放一个对象时，我们可以从对象的地址获取slab的地址，并将这个slab（现在是一个部分slab）放入适当的slab列表中。
+一个 slab 可以处于以下三种状态之一：
 
-一个slab可以由一个或多个页面组成，这与对象大小无关，也就是说，即使slab中的对象小于一个页面，slab也可以由多个页面组成。slab中的页面数量取决于kmem_cache.oo（即每个slab中的对象数量）。
+- **满（Full）**：所有对象已被分配。
+- **部分（Partial）**：部分对象空闲。
+- **空（Empty）**：所有对象均空闲。
 
-对于由多个页面组成的slab，每个slab会分配一个复合页面（由两个或更多物理上连续的页面组成的组）。在5.17之前的内核中，页面对象包含slab_cache和freelist成员，而对于由slab分配器管理的复合页面，只有头页面的slab_cache和freelist成员是有效的。尾页面的slab_cache和freelist成员并不用于识别slab_cache或slab上的第一个空闲对象。从5.17版本开始，slab_cache、freelist以及其他与slab相关的成员已被移动到一个单独的slab对象中。
+空 slab 可被销毁并回收，其底层页面返回给页面分配器。一个 slab 既可能是当前 CPU 的活动 slab，也可能存在于 CPU 层的部分 slab 列表，或节点层的部分 slab 列表中。任何部分列表中的 slab 要么是部分空的，要么是完全空的；**满 slab 不会出现在这些列表中**。由于释放对象时可通过对象地址快速定位其所属 slab，因此无需显式维护满 slab 列表（除调试用途外）。
 
-无论slab是由slab对象还是页面对象表示，slab.freelist或page.freelist都指向该slab上的第一个空闲对象。对于由复合页面组成的slab，头页面的freelist指向slab上的第一个空闲对象，而这个第一个空闲对象可以位于slab的任何位置，即它可以在头页面上，也可以在某个尾页面上。
+一个 slab 可以由一个或多个页面组成，这与对象大小无关。即使对象远小于一个页面，一个 slab 仍可能跨越多个页面。slab 中包含的页面数量取决于 `kmem_cache.oo`，即每个 slab 可容纳的对象数。当 slab 由多个页面构成时，系统会分配一个**复合页面**（由物理上连续的多个页面组成）。从 **Linux 5.17** 起，`slab_cache`、`freelist` 及其他 slab 相关成员被移动到了独立的 **slab 对象** 中。
 
-## 新增文件列表
-
-### SLUB 分配器简介
-
-SLUB（Simplified Unqueued Buddy）分配器是 Linux 内核中用于小对象内存分配的高效算法，取代了早期的 SLAB 分配器。其核心思想是：
-
-- **对象池化**：将固定大小的对象预先分配在连续的内存页（slab）中
-- **快速路径**：通过 per-CPU 缓存实现无锁的 O(1) 分配
-- **延迟释放**：空闲对象不立即归还系统，而是缓存起来等待下次分配
-- **自动回收**：完全空闲的 slab 页自动返还给页分配器（PMM）
+无论 slab 由页面对象还是 slab 对象表示，`slab.freelist` 或 `page.freelist` 都指向该 slab 中的第一个空闲对象。对于复合页面组成的 slab，头页面的 `freelist` 指向整个 slab 的第一个空闲对象，而该对象可能位于任意页面上（包括尾页）。
 
 ### 实验目标
 
@@ -148,11 +610,11 @@ SLUB（Simplified Unqueued Buddy）分配器是 Linux 内核中用于小对象�
 4. 通过完整的测试套件验证正确性
 5. 修复地址转换相关的关键 Bug
 
-| 文件名 | 路径 | 行数 | 作用 |
-|--------|------|------|------|
-| **slub.h** | `kern/mm/slub.h` | 248 | 头文件：数据结构定义、接口声明 |
-| **slub.c** | `kern/mm/slub.c` | 580+ | 实现文件：核心分配算法 |
-| **slub_test.c** | `kern/mm/slub_test.c` | 350+ | 测试套件：10 组测试用例 |
+| 文件名          | 路径                  | 作用                           |
+| --------------- | --------------------- | ------------------------------ |
+| **slub.h**      | `kern/mm/slub.h`      | 头文件：数据结构定义、接口声明 |
+| **slub.c**      | `kern/mm/slub.c`      | 实现文件：核心分配算法         |
+| **slub_test.c** | `kern/mm/slub_test.c` | 测试套件：10 组测试用例        |
 
 ## 核心头文件：slub.h
 
@@ -160,80 +622,39 @@ SLUB（Simplified Unqueued Buddy）分配器是 Linux 内核中用于小对象�
 
 ```c
 // 支持的对象大小范围（字节）
-#define SLUB_MIN_SIZE       16      // 最小对象：16 字节
-#define SLUB_MAX_SIZE       2048    // 最大对象：2048 字节
+#define SLUB_MIN_SIZE       16      // 最小对象：16 字节，定义 SLUB 服务的下限。
+#define SLUB_MAX_SIZE       2048    // 最大对象：2048 字节，定义 SLUB 服务的上限（更大的对象交给 PMM）。
 #define SLUB_SIZE_COUNT     8       // 预定义大小数量
 
 // CPU 本地缓存批处理参数
-#define SLUB_CPU_BATCH      8       // 每次批量迁移的对象数量
-#define SLUB_CPU_LIMIT      32      // CPU freelist 上限
+#define SLUB_CPU_BATCH      8       // 每次批量迁移的对象数量，性能优化：减少对全局 partial 链表的访问频率。
+#define SLUB_CPU_LIMIT      32      // CPU freelist 上限，防止过度占用：避免过多对象滞留在本地缓存，保证 Slab 页能够及时回收。
 ```
 
-**设计思想**：
-- **SLUB_CPU_BATCH=8**：参考 Linux SLUB，每次填充 8 个对象到 CPU freelist
-
-> **CPU Freelist** 是每个CPU核心专属的本地空闲对象链表
-
-- **SLUB_CPU_LIMIT=32**：防止 CPU 本地缓存过度占用内存，超过此限制触发 flush
-
-**为什么选择 8/32？**
-
-批量填充效应：
-- 8 个对象一次性迁移 → 减少 8 次指针操作
-- 摊销 refill 开销：平均每次分配 ~140 cycles（vs 朴素 ~200 cycles）
-- 命中率：92.4%（接近 Linux SLUB 的 95%）
-
-内存占用控制：
-- 单个 cache 最多占用：32 对象 * 2048B = 64KB
-- 8 个 cache 总计：最大 512KB（可接受）
-
-### 数据结构定义
+SLUB 的管理是分层的，由 `kmem_cache` 将管理职责分散到 `kmem_cache_cpu` 和 `kmem_cache_node`。
 
 #### kmem_cache_node - 节点管理结构
 
 ```c
 struct kmem_cache_node {
-    struct list_entry partial;      // 部分使用的 slab 页链表
+    struct list_entry partial;      // 部分使用的 slab 页链表，管理 NUMA 节点或全局范围内的非满非空的 Slab 页。
     unsigned long nr_partial;       // partial 链表中的页数
 };
 ```
 
 **作用**：管理"部分使用"的 slab 页（既不是满页也不是空页）
 
-**为什么需要 partial 链表？**
-
-场景：对象频繁分配释放
-1. 页A：10/15 个对象使用中
-2. 页B：5/15 个对象使用中
-3. 页C：15/15 个对象使用中（满页）
-
-没有 partial：每次分配都要从头遍历所有页 → O(n)
-有 partial：只遍历部分使用的页，满页和空页不在链表中 → 平均 O(1)
-
 #### kmem_cache_cpu - CPU 本地结构
 
 ```c
 struct kmem_cache_cpu {
-    void *freelist;                 // 指向下一个空闲对象
-    struct Page *page;              // 当前活跃 slab 页
-    unsigned int freelist_count;    // CPU freelist 中缓存的对象数
+    void *freelist;                 // 指向下一个空闲对象，核心 LIFO 栈，实现无锁的 O(1) 快速分配。
+    struct Page *page;              // 当前活跃 slab 页，避免频繁查找页结构，加速 freelist 消耗完后的填充操作。
+    unsigned int freelist_count;    // CPU freelist 中缓存的对象数，用于与 SLUB_CPU_LIMIT 比较，触发回流。
 };
 ```
 
 **核心思想**：实现"快速路径"分配
-
-**快速路径 vs 慢速路径**：
-```c
-// 快速路径（90% 的分配）：
-if (cache->cpu.freelist != NULL) {
-    object = cpu_pop(cache);  // O(1)
-    return object;
-}
-
-// 慢速路径（10% 的分配）：
-refill_cpu_freelist(cache);   // 批量填充
-object = cpu_pop(cache);       // 然后快速分配
-```
 
 #### kmem_cache - 缓存管理结构
 
@@ -274,25 +695,21 @@ struct Page {
     // ... 原有字段 ...
     
     // SLUB 字段（学号：2312325 添加）
-    void *s_mem;                   // slab 中第一个对象的地址
-    void *freelist;                // 空闲对象链表头
-    unsigned short inuse;          // 已分配对象数量
+    void *s_mem;                   // slab 中第一个对象的地址，用于计算对象索引和边界检查。
+    void *freelist;                // 空闲对象链表头，存储页内剩余空闲对象，供 cpu 批量填充时使用。
+    unsigned short inuse;          // 已分配对象数量，核心状态标志：inuse = 0 (空页)，0<inuse<objects (部分页)，inuse = objects (满页)。
     unsigned short objects;        // slab 中总对象数
-    struct kmem_cache *slab_cache; // 所属的 kmem_cache
+    struct kmem_cache *slab_cache; // 所属的 kmem_cache，核心作用：在释放对象时，通过 virt_to_page(object) 找到页，再通过 page→slab_cache 快速找到正确的缓存池进行释放。
 };
 ```
 
 **字段说明**：
+
 - **s_mem**：slab 起始地址，用于边界检查
 - **freelist**：页内空闲对象链表，用于快速分配
 - **inuse**：已分配对象计数，判断页状态（空/部分/满）
 - **objects**：总对象数（固定值），用于计算 inuse 比例
 - **slab_cache**：反向指针，释放时找到所属 cache
-
-**内存开销**：
-
-每页额外开销 = 8 + 8 + 2 + 2 + 8 = 28 字节
-32768 页 × 28 字节 = 896 KB（占 128MB 的 0.68%）
 
 ### 核心接口
 
@@ -372,7 +789,7 @@ void *slub_alloc(size_t size) {
 #### partial 链表管理
 
 ```c
-// 将页加入 partial 链表
+// 将页加入 partial 链表，将一个部分使用的 Page 加入到 cache->node.partial 链表。
 static void add_partial(struct kmem_cache *cache, struct Page *page) {
     if (page_on_partial(page)) {
         return;  // 已在链表中，避免重复添加
@@ -381,7 +798,7 @@ static void add_partial(struct kmem_cache *cache, struct Page *page) {
     cache->node.nr_partial++;
 }
 
-// 从 partial 链表移除页
+// 从 partial 链表移除页，将一个 Page 从 partial 链表中移除。
 static void remove_partial(struct kmem_cache *cache, struct Page *page) {
     if (!page_on_partial(page)) {
         return;  // 不在链表中
@@ -392,13 +809,11 @@ static void remove_partial(struct kmem_cache *cache, struct Page *page) {
 }
 ```
 
-**设计要点**：
-
-- **重复添加保护**：避免同一页多次进入 partial
-- **计数同步**：`nr_partial` 始终与链表长度一致
-- **指针清空**：移除后清空链表指针，方便 `page_on_partial` 判断
+**`partial` 链表** 用于存储那些**部分被使用** (既有空闲对象，也有正在使用对象) 的 Slab 页 (`struct Page`)。
 
 #### CPU freelist 管理
+
+这是 SLUB 的核心优化点。每个 CPU 都有一个本地的 `freelist`，用于快速存取对象，无需全局锁。
 
 ```c
 // 压入对象到 CPU freelist（学号：2312325）
@@ -417,26 +832,14 @@ static inline void *cpu_pop(struct kmem_cache *cache) {
 }
 ```
 
-**LIFO 栈结构**：
-```
-初始：freelist = NULL
+**【设计要点：为什么采用 LIFO？】**
 
-push(A)：
-  freelist -> A -> NULL
-
-push(B)：
-  freelist -> B -> A -> NULL
-
-pop()：
-  返回 B
-  freelist -> A -> NULL
-```
-
-**为什么用 LIFO？**
-- **缓存友好**：刚释放的对象最可能还在 CPU 缓存中
-- **实现简单**：单个指针操作，O(1) 时间复杂度
+- **缓存友好性 (Cache Affinity)**：刚释放的对象最有可能仍然在当前 CPU 的缓存（L1/L2）中。LIFO 确保了这些对象最快被重新分配，提高了缓存命中率。
+- **实现简单/高性能**：只需要对单个指针进行读写操作，时间复杂度为 O(1)。
 
 #### 批量迁移
+
+当 CPU 的本地 `freelist` 为空时，需要从一个 Slab 页中批量获取对象来“填充”本地缓存。
 
 ```c
 // 批量填充 CPU freelist（学号：2312325）
@@ -457,26 +860,16 @@ static int refill_cpu_freelist(struct kmem_cache *cache) {
 }
 ```
 
-**批量搬运流程**：
-```
-Page->freelist: obj1 -> obj2 -> ... -> obj8 -> obj9 -> NULL
-                  ↓       ↓              ↓
-                 搬运 8 个对象到 CPU
-                  ↓       ↓              ↓
-CPU freelist:   obj8 -> obj7 -> ... -> obj1 -> NULL
-Page->freelist: obj9 -> NULL
-```
+**流程：**
 
-**性能优化**：
-
-朴素方法：每次分配都从 page->freelist 取
-  100 次分配 = 100 次链表操作
-
-批量填充：一次搬运 8 个对象
-  100 次分配 = 13 次批量填充（13 × 8 = 104）
-  减少 87% 的链表操作！
+1. 调用 `acquire_slab(cache)` 找到或分配一个可用的 Slab 页 (`page`)。
+2. 循环 SLUB_CPU_BATCH 次（如 8 个对象）。
+3. 每次从 `page->freelist` 弹出一个对象。
+4. 将该对象推入 `cache->cpu.freelist` (使用 cpu_push)。
 
 #### 防止过度占用
+
+CPU freelist 虽然高效，但如果对象长期停留在本地，会阻止其所在的 Slab 页被回收，导致内存浪费。
 
 ```c
 // 回流对象到 slab（学号：2312325）
@@ -498,28 +891,18 @@ static void flush_cpu_freelist(struct kmem_cache *cache) {
 }
 ```
 
-**触发时机**：
-```
-释放操作时检查：
-  if (cache->cpu.freelist_count > 32) {
-      flush_cpu_freelist(cache);  // 回流到 slab
-  }
-```
+在释放对象时，如果 CPU 本地 `freelist` 的对象数量超过预设的阈值 (`SLUB_CPU_LIMIT`，如 32)。
 
-**为什么需要回流？**
-
-极端场景：
-1. 分配 1000 个对象（来自不同 slab）
-2. 全部释放到 CPU freelist
-3. CPU freelist 占用：1000 × 64B = 64KB
-4. 但这些 slab 页无法回收（对象还在 CPU）
-
-回流机制：
-- 超过 32 个对象时，归还到原 slab
-- 空 slab 可以立即回收
-- 内存占用稳定在 32 × 2048B = 64KB
+调用 `flush_cpu_freelist` 将多余的对象（超过限制的部分）弹出，并归还到其原始的 Slab 页 (`page->freelist`)。
 
 ### 地址转换（关键 Bug 修复）
+
+#### 1. 地址转换流程
+
+![image-20251014225537025](assets/image-20251014225537025.png)
+
+- **VA → PA**：通过 `PADDR(va)` 宏，将内核虚拟地址转换为其对应的物理地址。
+- **PA → PPN**：将物理地址右移 PGSHIFT（通常是 12，即 4096 字节），得到物理页号 (PPN)。
 
 ```c
 struct Page *virt_to_page(void *addr) {
@@ -535,31 +918,8 @@ struct Page *virt_to_page(void *addr) {
 ```
 
 **Bug 根源**：
-```
-RISC-V uCore 物理内存布局：
-0x00000000 ───────────── 低地址保留
-0x80000000 ───────────── DRAM_BASE（物理内存起点）
-           ├─ 128MB 物理内存
-0x88000000 ───────────── 设备映射
 
-问题：
-nbase = 0x80000000 >> 12 = 0x80000 (物理内存起始页号)
-pages 数组：[0, 1, 2, ..., 32767] (索引范围)
-
-错误计算：
-obj 虚拟地址 = 0xFFFFFFFFC0400000
-物理地址 = 0x80400000
-ppn = 0x80400
-page_index = ppn = 0x80400 = 524288 ✗ 越界！
-
-正确计算：
-page_index = ppn - nbase = 0x80400 - 0x80000 = 0x400 = 1024 ✓
-```
-
-**实验教训**：
-- **物理地址 ≠ Page 数组索引**
-- **RISC-V 特性**：物理内存从 0x80000000 开始
-- **x86 对比**：物理内存从 0x0 开始，无需减去 nbase
+在 RISC-V uCore 这样的系统中，物理内存的起始地址 (DRAM_BASE) 是 0x80000000，对应的起始物理页号 (nbase) 是 0x80000。如果直接使用 PPN 作为索引，例如 0x80400，这个值远大于 pages 数组的实际大小，会导致**数组越界** (Out-of-Bounds Access) 错误，访问到内核中的非法内存。通过减去物理内存起始页号 (nbase)，将 PPN **归零化**，使其匹配到 `pages` 数组中正确的相对偏移索引。
 
 ### Slab 页管理
 
@@ -591,22 +951,12 @@ void init_slab_freelist(struct kmem_cache *cache, struct Page *page) {
 }
 ```
 
-**内存布局**（64B 对象，4096B 页）：
-```
-页地址：0x80200000
-对象数：4096 / 64 = 64 个
+这是**页内**空闲对象的 LIFO 链表。
 
-内存视图：
-0x80200000: obj[0]  -> 0x80200040
-0x80200040: obj[1]  -> 0x80200080
-0x80200080: obj[2]  -> 0x802000C0
-...
-0x80200FC0: obj[63] -> NULL
-
-page->freelist = 0x80200000
-page->objects = 64
-page->inuse = 0
-```
+- **流程：** 通过循环，从页的起始地址开始，按照 `obj_size` 依次计算下一个对象的地址。
+- **指针嵌入：** 使用 `*(void **)current = next` 的技巧，将下一个空闲对象的地址存储在当前对象的**头部**（利用对象本身的内存空间作为指针）。
+- **LIFO 结构：** 最终形成一个单向链表 $obj[0]→obj[1]→⋯→obj[N−1]→NULL$。
+- **头指针：** `page->freelist = addr`，指向链表的第一个对象（即 obj[0]）。
 
 #### 分配新 slab
 
@@ -637,22 +987,12 @@ struct Page *allocate_slab(struct kmem_cache *cache) {
 }
 ```
 
-**为什么需要清空链表指针？**
-```
-场景：PMM 分配的页可能之前在 free_list 中
-page->page_link.next = 0xXXXXXXXX (旧地址)
+该函数从 PMM (物理内存管理器) 获取一个新页，并将其初始化为 Slab。
 
-不清空 → add_partial 时误判：
-  if (page->page_link.next != NULL) {
-      // 认为已在 partial，跳过添加
-      // 实际上是旧数据！
-  }
+**关键 Bug 修复：清除旧状态**
 
-正确做法：
-  page->page_link.prev = NULL;
-  page->page_link.next = NULL;
-  // 现在 page_on_partial(page) 返回 false
-```
+- PMM 分配的页可能是以前用过的，旧的标志 (`flags`、`property`、`ref`) 必须**完全清除**。
+- **重要：清空链表指针** (`page->page_link.prev = NULL; page->page_link.next = NULL;`)。如果不清空，可能会残留旧的链表数据，导致 `add_partial` 错误地认为该页已经在一个链表中，从而跳过添加到 `partial` 链表的操作。
 
 #### 释放 slab
 
@@ -679,26 +1019,22 @@ void free_slab(struct kmem_cache *cache, struct Page *page) {
 }
 ```
 
-**为什么要重置这么多字段？**
-```
-PMM 的 free_pages() 要求：
-  assert(!PageReserved(page));
-  assert(!PageProperty(page));
+当一个 Slab 页上的所有对象都被释放，`page->inuse == 0` 时，该页可以归还给 PMM。
 
-如果不清空：
-  page->flags = PG_slab | PG_property  // 之前设置的
-  free_page(page) → panic("PageProperty is set!")
+**前提检查：** 使用 `assert(page->inuse == 0)` 确保只有完全空闲的页才会被释放。
 
-正确流程：
-1. 清空所有 flags
-2. 清空 property
-3. 清空 ref
-4. 归还到 PMM
-```
+**关键 Bug 修复：重置页面状态**
+
+- PMM 的 `free_page` 函数通常会对页面的状态标志进行严格检查（例如，不允许 PG_property 或 PageReserved 标志存在）。
+- 因此，必须**完全重置**所有 PMM 相关的字段 (`flags = 0`, `property = 0`, `ref = 0`)，解除所有 SLUB 相关的状态，确保页以**干净**的状态返回给 PMM。
+
+**清理 SLUB 字段：** 将 SLUB 相关的元数据指针 (`slab_cache`, `freelist`, `s_mem`) 清空，防止悬空指针。
 
 ### 核心分配算法
 
 #### 分配对象
+
+分配算法旨在优先利用 CPU 本地缓存（快速路径）实现无锁分配，只有当本地缓存耗尽时才进入慢速路径（批量填充）。
 
 ```c
 void *kmem_cache_alloc(struct kmem_cache *cache) {
@@ -733,45 +1069,37 @@ void *kmem_cache_alloc(struct kmem_cache *cache) {
 }
 ```
 
-**分配流程图**：
-```
-[kmem_cache_alloc]
-        ↓
-CPU freelist 非空？
-    ├─ Yes → cpu_pop() → 返回对象
-    └─ No  ↓
-refill_cpu_freelist()
-        ↓
-acquire_slab() [3级优先级]
-    ├─ 1. CPU 页有空闲？ → 使用
-    ├─ 2. partial 非空？ → 取头节点
-    └─ 3. 分配新页 → 初始化 slab
-        ↓
-批量搬运 8 个对象到 CPU freelist
-        ↓
-cpu_pop() → 返回对象
-```
+1. **快速路径：本地缓存命中**
 
-**性能分析**：
-| 场景 | CPU freelist | acquire_slab | refill | 总开销 |
-|------|--------------|--------------|--------|--------|
-| 快速路径 | 命中 | 跳过 | 跳过 | ~50 cycles |
-| 慢速路径 | 未命中 | 重用页 | 8 次搬运 | ~800 cycles |
-| 新页分配 | 未命中 | alloc_page | 初始化 | ~5000 cycles |
+- **检查：** 检查当前 CPU 的 `cache->cpu.freelist` 是否为空。
+- **命中 (非空)：**
+  - 调用 `cpu_pop(cache)` 从本地 LIFO 栈中弹出一个对象 (`object`)。
+  - 通过 `virt_to_page(object)` 找到其所属的 Slab 页 (`page`)。
+  - **更新计数：** `page->inuse++`，标记该对象已被使用。
+  - **返回：** 直接返回对象，完成一次极快的 O(1) 分配。
 
-**摊销效果**：
+2. **慢速路径：本地缓存未命中（批量填充）**
 
-100 次分配：
+- **触发：** 当 `cache->cpu.freelist == NULL` 时。
+- **动作：** 调用 `refill_cpu_freelist(cache)` 批量填充本地缓存。
+  - `refill_cpu_freelist` 的三级优先级 (`acquire_slab`)：
+    1. **当前 CPU 页内空闲：** 优先从 `cache->cpu.page->freelist` 获取。
+    2. **Partial 队列：** 其次从 `cache->node.partial` 链表获取一个部分使用的页。
+    3. **新页分配：** 如果以上皆空，则从 PMM 调用 `allocate_slab` 获取并初始化一个全新的 Slab 页。
+  - **批量搬运：** 将 Slab 页内的空闲对象（SLUB_CPU_BATCH 个）批量移动到 `cache->cpu.freelist`。
+- **回退：** 如果填充失败（内存耗尽），返回 NULL。
 
-- 90 次快速路径：90 × 50 = 4500 cycles
-- 10 次慢速路径：10 × 800 = 8000 cycles
-- 平均：12500 / 100 = 125 cycles/次
+3. **Slab 状态维护 (分配后)**
 
-对比朴素 slab：
-- 每次都从 page->freelist 取：~200 cycles/次
-- 性能提升：(200 - 125) / 200 = 37.5%
+对象分配成功后，必须检查并维护 Slab 页的状态：
+
+- **检查满载：** 如果 page→inuse==page→objects，说明该页已满。
+- **Partial 移除：** 如果该页之前在 `partial` 链表上，必须调用 `remove_partial` 将其移除（满页不应再被视为部分空闲）。
+- **CPU 页清空：** 如果当前页是 `cache->cpu.page`，且在本次分配后，CPU 本地**和**页内空闲链表都耗尽了，说明这个页已经完全耗尽，将 `cache->cpu.page` 置为 NULL，以便下次 `refill` 时寻找新页。
 
 #### 释放对象
+
+释放算法需要将对象归还到正确的位置（CPU 本地或 Slab 页内），并执行必要的内存回收和状态更新。
 
 ```c
 void kmem_cache_free(struct kmem_cache *cache, void *object) {
@@ -812,353 +1140,474 @@ void kmem_cache_free(struct kmem_cache *cache, void *object) {
 }
 ```
 
-**释放流程图**：
-```
-[kmem_cache_free]
-        ↓
-virt_to_page(object)
-        ↓
-page->inuse--
-        ↓
-page == CPU 页？
-    ├─ Yes → cpu_push() + flush_cpu_freelist()
-    └─ No  ↓
-        *(void**)object = page->freelist
-        page->freelist = object
-        ↓
-        page->inuse == 0？
-            ├─ Yes → free_slab() [释放到 PMM]
-            └─ No  ↓
-                page->inuse < objects？
-                    └─ Yes → add_partial() [加入 partial]
-```
+1. **前置步骤**
 
-**关键设计决策**：
-1. **CPU 页特殊处理**：优先填充本地缓存，提升后续分配性能
-2. **自动内存回收**：空 slab 立即释放，避免内存浪费
-3. **partial 队列复用**：部分使用的 slab 进入 partial，供下次 refill 使用
+- **计数：** `cache->free_count++`。
+- **地址转换：** 通过 `virt_to_page(object)` 找到所属页。
+- **断言检查：** 确保该页是 Slab 页 (`PG_slab`) 且属于当前 `cache`。
+- **计数更新：** `page->inuse--`。
 
-## 测试验证
+**2. 分支 A：释放到当前 CPU 活跃页 (快速路径)**
 
-### 测试执行
+如果释放的对象属于**当前 CPU 正在使用的页** (`page == cache->cpu.page`)：
 
-**测试命令**（在 `labcode/lab2` 目录执行）：
+1. **优先本地缓存：** 调用 `cpu_push(cache, object)` 将对象放入 CPU 本地 freelist。
+2. **防溢出回流：** 调用 `flush_cpu_freelist(cache)` 检查本地 freelist 是否超过 SLUB_CPU_LIMIT，如果超过，将多余的对象回流到其所属的 Slab 页。
+3. **CPU 页解除关联：** 如果页已完全空闲 (`page->inuse == 0`) 且 CPU 本地缓存已清空 (`cache->cpu.freelist_count == 0`)，则将 `cache->cpu.page` 置为 NULL。
 
-```bash
-bash run_test.sh
-```
+**3. 分支 B：释放到非 CPU 活跃页 (慢速路径)**
 
-**编译输出**
+如果释放的对象属于**其他 CPU 或非活跃页**：
 
-```
-+ riscv64-unknown-elf-gcc kern/init/init.c
-+ riscv64-unknown-elf-gcc kern/mm/pmm.c
-+ riscv64-unknown-elf-gcc kern/mm/slub.c
-+ riscv64-unknown-elf-ld -o bin/kernel
-riscv64-unknown-elf-ld: warning: bin/kernel has a LOAD segment with RWX permissions
-```
+1. **归还页内：** 通过指针嵌入将对象放回**页内** freelist 的头部：
 
-**QEMU 启动参数**
+   ```c
+   *(void **)object = page->freelist;
+   page->freelist = object;
+   ```
 
-```bash
-qemu-system-riscv64 \
-  -machine virt \
-  -nographic \
-  -bios default \
-  -device loader,file=bin/kernel,addr=0x80200000 \
-  -m 128M \
-  -serial mon:stdio
-```
+2. **回收检查 (完全空闲)：** 如果 page→inuse==0：
 
-### 3. 详细测试用例与结果
+   - 说明该页已从部分使用 → 完全空闲。
+   - 调用 `remove_partial(cache, page)` 将其从 `partial` 链表移除。
+   - 调用 `free_slab(cache, page)` 将页归还给 PMM (物理内存管理器)，实现内存回收。
 
-#### 测试用例1：基础分配与释放
+3. **状态更新 (部分空闲)：** 如果 page→inuse<page→objects：
 
-**测试目标**：验证单次分配释放的正确性
+   - 说明该页已从满页 → 部分空闲，或仍然是部分空闲。
+   - 调用 `add_partial(cache, page)`，确保它在 `partial` 链表中，以便下次 `refill` 时可以被重用。
+
+## 系统测试
+
+| **测试函数**             | **测试目标**                | **关键验证点**                                               |
+| ------------------------ | --------------------------- | ------------------------------------------------------------ |
+| `test_basic_alloc_free`  | **基础分配与释放**          | $\mathbf{slub\_alloc(64)}$ 能成功分配内存，写入数据后**数据不被破坏**，并且 $\mathbf{slub\_free()}$ 能正确释放。 |
+| `test_multiple_allocs`   | **多对象独立性**            | 分配 $\mathbf{10}$ 个对象，验证它们之间**不重叠**，并且写入的**数据互不干扰**。 |
+| `test_different_sizes`   | **不同大小的分配**          | 测试 $\mathbf{16}$ **字节**到 $\mathbf{2048}$ **字节**的典型 $\text{kmalloc}$ 大小，验证 $\text{SLUB}$ **根据大小选择对应 $\mathbf{Cache}$** 的功能，并检查数据完整性。 |
+| `test_realloc_same_size` | **重复分配与重用**          | 重复分配和释放同一大小（$\mathbf{256}$ **字节**）的对象 $\mathbf{100}$ 次，测试 $\text{SLUB}$ **对空闲对象的重用机制**是否高效且无误。 |
+| `test_cross_slab`        | **跨 $\mathbf{Slab}$ 分配** | 故意分配 **超过一个 $\mathbf{slab}$ 所能容纳的对象数量**，测试 $\text{SLUB}$ 是否能正确地**分配新的 $\mathbf{slab}$** 页面来满足请求。 |
+| `test_mixed_operations`  | **混合操作与重用**          | 分配、部分释放，然后再次分配，验证 $\text{SLUB}$ 能**重用先前释放的空闲对象**（如 `obj4` 应该重用 `obj2` 的空间）。 |
+| `test_boundary_sizes`    | **边界条件分配**            | 测试最小尺寸（$\mathbf{1}$ **字节**）、对齐边界尺寸（$\mathbf{16}$ **字节**、$\mathbf{17}$ **字节**）以及最大 $\text{SLUB}$ 尺寸（$\mathbf{2048}$ **字节**）和**超大尺寸**（$\mathbf{2049}$ **字节**）的分配。特别是验证超大尺寸是否绕过 $\text{SLUB}$ 机制，**直接进行页分配**（`!(page_2049->flags & PG_slab)`）。 |
+| `test_stress`            | **压力测试**                | 在 $\mathbf{500}$ **次循环**中，**轮换不同大小**的对象进行批量分配和释放，以长时间、高频率地测试分配器的**稳定性和内存耗尽处理**。 |
+| `test_cache_statistics`  | **统计信息更新**            | 分配和释放对象后，检查对应 $\text{Cache}$ 的 **`alloc_count`** 和 **`free_count`** 是否正确更新。 |
+| `test_null_handling`     | **空指针处理**              | 验证 $\mathbf{slub\_free(NULL)}$ 和 $\mathbf{slub\_alloc(0)}$ 等不合法操作是否能**被安全处理**（不导致系统崩溃，并返回正确结果）。 |
 
 ```c
-// kern/mm/slub_test.c
-void *obj = kmalloc(64);
-assert(obj != NULL);
-kfree(obj);
-```
+#include <slub.h>
+#include <stdio.h>
+#include <string.h>
+#include <assert.h>
 
-**结果**：✅ **PASS** - 无内存泄漏，指针有效
+// 测试统计
+static int tests_passed = 0;
+static int tests_failed = 0;
 
-#### 测试用例2：多尺寸分配
+#define TEST_BEGIN(name) \
+    do { \
+        cprintf("\n[TEST] %s ... ", name); \
+    } while (0)
 
-**测试目标**：验证 8 种尺寸类别的正确路由
+#define TEST_PASS() \
+    do { \
+        cprintf("PASS\n"); \
+        tests_passed++; \
+    } while (0)
 
-```c
-void *objs[8];
-for (int i = 0; i < 8; i++) {
-    objs[i] = kmalloc(slub_sizes[i]);  // 16, 32, ..., 2048
-    assert(objs[i] != NULL);
-}
-```
+#define TEST_FAIL(msg) \
+    do { \
+        cprintf("FAIL: %s\n", msg); \
+        tests_failed++; \
+    } while (0)
 
-**结果**：✅ **PASS** - 所有尺寸正确分配
+#define TEST_ASSERT(cond, msg) \
+    do { \
+        if (!(cond)) { \
+            TEST_FAIL(msg); \
+            return; \
+        } \
+    } while (0)
 
-#### 测试用例3：对象独立性验证
+// =============================================================================
+// 测试用例
+// =============================================================================
 
-**测试目标**：确保分配的对象内存地址不重叠
-
-```c
-void *obj1 = kmalloc(128);
-void *obj2 = kmalloc(128);
-assert(obj1 != obj2);
-assert(abs((char*)obj1 - (char*)obj2) >= 128);
-```
-
-**结果**：✅ **PASS** - 对象地址互不冲突
-
-#### 测试用例4：CPU freelist 批量填充
-
-**测试目标**：验证 SLUB_CPU_BATCH=8 的批量逻辑
-
-```c
-void *objs[10];
-for (int i = 0; i < 10; i++) {
-    objs[i] = kmalloc(256);
-}
-// 第 1-8 次分配：触发 refill，一次性获取 8 个对象
-// 第 9-10 次分配：再次触发 refill
-```
-
-**结果**：✅ **PASS** - 批量填充工作正常，无性能抖动
-
-#### 测试用例5：CPU freelist 上限控制
-
-**测试目标**：验证 SLUB_CPU_LIMIT=32 的回流机制
-
-```c
-void *objs[40];
-for (int i = 0; i < 40; i++) {
-    objs[i] = kmalloc(512);
-}
-for (int i = 0; i < 40; i++) {
-    kfree(objs[i]);  // 触发 flush_cpu_freelist
-}
-```
-
-**结果**：✅ **PASS** - 超过32个对象时自动回流到 slab
-
-#### 测试用例6：partial 链表管理
-
-**测试目标**：验证部分使用的 slab 的正确添加和移除
-
-```c
-void *obj1 = kmalloc(1024);  // 分配新 slab
-void *obj2 = kmalloc(1024);  // 同一 slab
-kfree(obj1);                 // slab 变为 partial
-kfree(obj2);                 // slab 完全空闲，释放回 PMM
-```
-
-**结果**：✅ **PASS** - partial 链表状态正确
-
-#### 测试用例7：slab 自动回收
-
-**测试目标**：验证空 slab 立即释放到 PMM
-
-```c
-void *obj = kmalloc(2048);  // 分配新 slab
-kfree(obj);                 // slab 完全空闲
-// 预期：slab 被释放，active_slabs--
-```
-
-**结果**：✅ **PASS** - 内存自动回收，无泄漏
-
-#### 测试用例8：边界条件测试
-
-**测试目标**：测试最小最大尺寸和 NULL 处理
-
-```c
-void *obj_min = kmalloc(1);    // 应分配到 16B 缓存
-void *obj_max = kmalloc(2048);
-void *obj_over = kmalloc(4096); // 超过最大尺寸，返回 NULL
-kfree(NULL);                   // 安全处理
-```
-
-**结果**：✅ **PASS** - 边界处理正确
-
-#### 测试用例9：交叉分配释放
-
-**测试目标**：模拟真实场景的随机分配释放
-
-```c
-void *objs[20];
-for (int i = 0; i < 20; i += 2) {
-    objs[i] = kmalloc(128);
-}
-for (int i = 1; i < 20; i += 2) {
-    objs[i] = kmalloc(128);
-}
-for (int i = 0; i < 20; i++) {
-    kfree(objs[i]);
-}
-```
-
-**结果**：✅ **PASS** - 复杂场景无错误
-
-#### 测试用例10：压力测试
-
-**测试目标**：大规模分配释放，测试稳定性
-
-```c
-for (int round = 0; round < 100; round++) {
-    void *objs[50];
-    for (int i = 0; i < 50; i++) {
-        objs[i] = kmalloc(rand() % 2048 + 1);
-    }
-    for (int i = 0; i < 50; i++) {
-        kfree(objs[i]);
-    }
-}
-```
-
-**结果**：✅ **PASS** - 5000次操作无崩溃，内存收敛
-
-## 集成示例：slub_example.c
-
-### 1. 基本集成
-
-```c
-void pmm_init_with_slub(void) {
-    // 原有的 PMM 初始化...
+/* test_basic_alloc_free - 基本分配和释放
+ */
+static void test_basic_alloc_free(void) {
+    TEST_BEGIN("Basic allocation and free");
     
-    cprintf("Initializing SLUB allocator...\n");
-    slub_init();
+    // 分配单个对象
+    void *obj = slub_alloc(64);
+    TEST_ASSERT(obj != NULL, "Failed to allocate 64 bytes");
     
-    cprintf("Running SLUB tests...\n");
-    if (slub_test() == 0) {
-        cprintf("✓ SLUB allocator ready!\n");
-    } else {
-        panic("SLUB test failed!");
+    // 写入数据验证可用性
+    memset(obj, 0xAA, 64);
+    for (int i = 0; i < 64; i++) {
+        TEST_ASSERT(((uint8_t *)obj)[i] == 0xAA, "Memory corruption detected");
     }
-}
-```
-
----
-
-### 2. 进程控制块缓存
-
-```c
-struct kmem_cache *proc_cache = NULL;
-
-void proc_init(void) {
-    proc_cache = kmem_cache_create("proc_struct", 
-                                   sizeof(struct proc_struct), 0);
-}
-
-struct proc_struct *alloc_proc(void) {
-    struct proc_struct *proc = kmem_cache_alloc(proc_cache);
-    if (proc != NULL) {
-        memset(proc, 0, sizeof(struct proc_struct));
-    }
-    return proc;
-}
-
-void free_proc(struct proc_struct *proc) {
-    kmem_cache_free(proc_cache, proc);
-}
-```
-
----
-
-### 3. 通用 kmalloc/kfree
-
-```c
-void *kmalloc(size_t size) {
-    return slub_alloc(size);
-}
-
-void kfree(void *ptr) {
-    slub_free(ptr);
-}
-
-// 使用示例
-char *buffer = (char *)kmalloc(256);
-strcpy(buffer, "Hello, SLUB!");
-kfree(buffer);
-```
-
----
-
-### 4. 内存池模式
-
-```c
-struct buffer_pool {
-    struct kmem_cache *cache;
-    unsigned long alloc_count;
-};
-
-struct buffer_pool *create_buffer_pool(void) {
-    struct buffer_pool *pool = kmalloc(sizeof(*pool));
-    pool->cache = kmem_cache_create("buffer_pool", 4096, 0);
-    pool->alloc_count = 0;
-    return pool;
-}
-
-void *buffer_pool_alloc(struct buffer_pool *pool) {
-    void *buf = kmem_cache_alloc(pool->cache);
-    pool->alloc_count++;
-    return buf;
-}
-```
-
----
-
-### 5. 性能测试
-
-```c
-void benchmark_slub_vs_pmm(void) {
-    const int iterations = 1000;
     
-    // SLUB 性能测试
-    uint64_t start = rdcycle();
+    // 释放对象
+    slub_free(obj);
+    
+    TEST_PASS();
+}
+
+/* test_multiple_allocs - 多对象分配
+ */
+static void test_multiple_allocs(void) {
+    TEST_BEGIN("Multiple allocations");
+    
+    const int count = 10;
+    void *objects[count];
+    
+    // 分配多个对象
+    for (int i = 0; i < count; i++) {
+        objects[i] = slub_alloc(128);
+        TEST_ASSERT(objects[i] != NULL, "Allocation failed");
+        
+        // 写入唯一标识
+        *(int *)objects[i] = i;
+    }
+    
+    // 验证对象独立性
+    for (int i = 0; i < count; i++) {
+        TEST_ASSERT(*(int *)objects[i] == i, "Object overwritten");
+    }
+    
+    // 验证地址不重叠
+    for (int i = 0; i < count; i++) {
+        for (int j = i + 1; j < count; j++) {
+            uintptr_t addr_i = (uintptr_t)objects[i];
+            uintptr_t addr_j = (uintptr_t)objects[j];
+            TEST_ASSERT(addr_i + 128 <= addr_j || addr_j + 128 <= addr_i,
+                       "Objects overlap");
+        }
+    }
+    
+    // 释放所有对象
+    for (int i = 0; i < count; i++) {
+        slub_free(objects[i]);
+    }
+    
+    TEST_PASS();
+}
+
+/* test_different_sizes - 不同大小分配
+ */
+static void test_different_sizes(void) {
+    TEST_BEGIN("Different size allocations");
+    
+    size_t sizes[] = {16, 32, 64, 128, 256, 512, 1024, 2048};
+    void *objects[8];
+    
+    // 分配不同大小
+    for (int i = 0; i < 8; i++) {
+        objects[i] = slub_alloc(sizes[i]);
+        TEST_ASSERT(objects[i] != NULL, "Allocation failed");
+        
+        // 填充数据
+        memset(objects[i], i, sizes[i]);
+    }
+    
+    // 验证数据完整性
+    for (int i = 0; i < 8; i++) {
+        for (size_t j = 0; j < sizes[i]; j++) {
+            TEST_ASSERT(((uint8_t *)objects[i])[j] == (uint8_t)i,
+                       "Data corruption");
+        }
+    }
+    
+    // 释放
+    for (int i = 0; i < 8; i++) {
+        slub_free(objects[i]);
+    }
+    
+    TEST_PASS();
+}
+
+/* test_realloc_same_size - 重复分配释放同一大小
+ */
+static void test_realloc_same_size(void) {
+    TEST_BEGIN("Repeated alloc/free same size");
+    
+    const int iterations = 100;
+    
     for (int i = 0; i < iterations; i++) {
-        void *obj = slub_alloc(128);
+        void *obj = slub_alloc(256);
+        TEST_ASSERT(obj != NULL, "Allocation failed");
+        
+        // 写入测试数据
+        *(int *)obj = i;
+        TEST_ASSERT(*(int *)obj == i, "Data corrupted");
+        
         slub_free(obj);
     }
-    uint64_t slub_cycles = rdcycle() - start;
     
-    // PMM 性能测试
-    start = rdcycle();
-    for (int i = 0; i < iterations; i++) {
-        struct Page *page = alloc_page();
-        free_page(page);
+    TEST_PASS();
+}
+
+/* test_cross_slab - 跨 slab 分配
+ */
+static void test_cross_slab(void) {
+    TEST_BEGIN("Cross-slab allocation");
+    
+    struct kmem_cache *cache = get_cache_for_size(64);
+    TEST_ASSERT(cache != NULL, "Cache not found");
+    
+    unsigned int obj_per_slab = cache->objects_per_slab;
+    cprintf("(objects per slab: %u) ", obj_per_slab);
+    
+    // 分配超过一个 slab 的对象
+    int count = obj_per_slab * 2 + 5;
+    void **objects = (void **)slub_alloc(count * sizeof(void *));
+    TEST_ASSERT(objects != NULL, "Failed to allocate tracking array");
+    
+    for (int i = 0; i < count; i++) {
+        objects[i] = slub_alloc(64);
+        TEST_ASSERT(objects[i] != NULL, "Allocation failed");
+        *(int *)objects[i] = i;
     }
-    uint64_t pmm_cycles = rdcycle() - start;
     
-    cprintf("SLUB is %.2fx faster than PMM\n", 
-            (double)pmm_cycles / slub_cycles);
+    // 验证所有对象
+    for (int i = 0; i < count; i++) {
+        TEST_ASSERT(*(int *)objects[i] == i, "Object corrupted");
+    }
+    
+    // 释放
+    for (int i = 0; i < count; i++) {
+        slub_free(objects[i]);
+    }
+    slub_free(objects);
+    
+    TEST_PASS();
+}
+
+/* test_mixed_operations - 混合分配释放
+ */
+static void test_mixed_operations(void) {
+    TEST_BEGIN("Mixed allocation and free");
+    
+    void *obj1 = slub_alloc(32);
+    void *obj2 = slub_alloc(64);
+    void *obj3 = slub_alloc(128);
+    
+    TEST_ASSERT(obj1 && obj2 && obj3, "Allocations failed");
+    
+    // 部分释放
+    slub_free(obj2);
+    
+    // 继续分配
+    void *obj4 = slub_alloc(64);  // 应该重用 obj2 的空间
+    void *obj5 = slub_alloc(256);
+    
+    TEST_ASSERT(obj4 && obj5, "Allocations failed");
+    
+    // 写入验证
+    *(int *)obj1 = 1;
+    *(int *)obj3 = 3;
+    *(int *)obj4 = 4;
+    *(int *)obj5 = 5;
+    
+    TEST_ASSERT(*(int *)obj1 == 1, "obj1 corrupted");
+    TEST_ASSERT(*(int *)obj3 == 3, "obj3 corrupted");
+    TEST_ASSERT(*(int *)obj4 == 4, "obj4 corrupted");
+    TEST_ASSERT(*(int *)obj5 == 5, "obj5 corrupted");
+    
+    // 全部释放
+    slub_free(obj1);
+    slub_free(obj3);
+    slub_free(obj4);
+    slub_free(obj5);
+    
+    TEST_PASS();
+}
+
+/* test_boundary_sizes - 边界大小测试
+ */
+static void test_boundary_sizes(void) {
+    TEST_BEGIN("Boundary size allocations");
+    
+    // 最小尺寸
+    void *obj_min = slub_alloc(1);
+    TEST_ASSERT(obj_min != NULL, "Min size allocation failed");
+    *(uint8_t *)obj_min = 0xFF;
+    TEST_ASSERT(*(uint8_t *)obj_min == 0xFF, "Min size data corrupted");
+    
+    // 边界尺寸
+    void *obj_16 = slub_alloc(16);
+    void *obj_17 = slub_alloc(17);  // 应该使用 32 字节 cache
+    void *obj_2048 = slub_alloc(2048);
+    void *obj_2049 = slub_alloc(2049);  // 应该直接分配页
+    
+    TEST_ASSERT(obj_16 && obj_17 && obj_2048 && obj_2049, 
+               "Boundary allocations failed");
+    
+    // 验证分配策略
+    struct Page *page_16 = virt_to_page(obj_16);
+    struct Page *page_17 = virt_to_page(obj_17);
+    struct Page *page_2048 = virt_to_page(obj_2048);
+    struct Page *page_2049 = virt_to_page(obj_2049);
+    
+    TEST_ASSERT(page_16->flags & PG_slab, "obj_16 should be slab");
+    TEST_ASSERT(page_17->flags & PG_slab, "obj_17 should be slab");
+    TEST_ASSERT(page_2048->flags & PG_slab, "obj_2048 should be slab");
+    TEST_ASSERT(!(page_2049->flags & PG_slab), "obj_2049 should not be slab");
+    
+    slub_free(obj_min);
+    slub_free(obj_16);
+    slub_free(obj_17);
+    slub_free(obj_2048);
+    slub_free(obj_2049);
+    
+    TEST_PASS();
+}
+
+/* test_stress - 压力测试
+ */
+static void test_stress(void) {
+    TEST_BEGIN("Stress test");
+    
+    const int iterations = 500;
+    const int batch_size = 20;
+    
+    for (int iter = 0; iter < iterations; iter++) {
+        void *batch[batch_size];
+        
+        // 批量分配
+        for (int i = 0; i < batch_size; i++) {
+            size_t size = 16 << (iter % 8);  // 轮换不同大小
+            batch[i] = slub_alloc(size);
+            
+            if (batch[i] == NULL) {
+                // 内存耗尽，释放已分配的并退出
+                for (int j = 0; j < i; j++) {
+                    slub_free(batch[j]);
+                }
+                cprintf("(memory exhausted at iteration %d) ", iter);
+                goto stress_done;
+            }
+            
+            // 写入唯一标识
+            *(int *)batch[i] = i;
+        }
+        
+        // 验证
+        for (int i = 0; i < batch_size; i++) {
+            TEST_ASSERT(*(int *)batch[i] == i, "Stress test data corrupted");
+        }
+        
+        // 批量释放
+        for (int i = 0; i < batch_size; i++) {
+            slub_free(batch[i]);
+        }
+    }
+    
+stress_done:
+    TEST_PASS();
+}
+
+/* test_cache_statistics - 统计信息测试
+ */
+static void test_cache_statistics(void) {
+    TEST_BEGIN("Cache statistics");
+    
+    // 获取初始统计
+    struct kmem_cache *cache = get_cache_for_size(128);
+    TEST_ASSERT(cache != NULL, "Cache not found");
+    
+    unsigned long alloc_before = cache->alloc_count;
+    unsigned long free_before = cache->free_count;
+    
+    // 执行分配释放
+    const int count = 10;
+    void *objects[count];
+    
+    for (int i = 0; i < count; i++) {
+        objects[i] = slub_alloc(128);
+    }
+    
+    TEST_ASSERT(cache->alloc_count == alloc_before + count,
+               "Alloc count incorrect");
+    
+    for (int i = 0; i < count; i++) {
+        slub_free(objects[i]);
+    }
+    
+    TEST_ASSERT(cache->free_count == free_before + count,
+               "Free count incorrect");
+    
+    TEST_PASS();
+}
+
+/* test_null_handling - NULL 处理测试
+ */
+static void test_null_handling(void) {
+    TEST_BEGIN("NULL pointer handling");
+    
+    // 应该安全处理 NULL
+    slub_free(NULL);  // 不应该崩溃
+    
+    void *obj = slub_alloc(0);  // 应该返回 NULL
+    TEST_ASSERT(obj == NULL, "Zero size should return NULL");
+    
+    TEST_PASS();
+}
+
+// =============================================================================
+// 主测试函数
+// =============================================================================
+
+int slub_test(void) {
+    cprintf("\n");
+    cprintf("=====================================\n");
+    cprintf("     SLUB Allocator Test Suite\n");
+    cprintf("=====================================\n");
+    
+    tests_passed = 0;
+    tests_failed = 0;
+    
+    // 运行所有测试
+    test_basic_alloc_free();
+    test_multiple_allocs();
+    test_different_sizes();
+    test_realloc_same_size();
+    test_cross_slab();
+    test_mixed_operations();
+    test_boundary_sizes();
+    test_null_handling();
+    test_cache_statistics();
+    test_stress();  // 最后运行压力测试
+    
+    // 完整性检查
+    cprintf("\n");
+    slub_check();
+    
+    // 打印统计
+    slub_print_stats();
+    
+    // 总结
+    cprintf("\n");
+    cprintf("=====================================\n");
+    cprintf("     Test Summary\n");
+    cprintf("-------------------------------------\n");
+    cprintf("     Passed: %d\n", tests_passed);
+    cprintf("     Failed: %d\n", tests_failed);
+    cprintf("     Total:  %d\n", tests_passed + tests_failed);
+    cprintf("=====================================\n");
+    
+    if (tests_failed == 0) {
+        cprintf("\n✓ All tests PASSED!\n\n");
+        return 0;
+    } else {
+        cprintf("\n✗ Some tests FAILED!\n\n");
+        return -1;
+    }
 }
 ```
-
-**典型输出**：
-```
-========================================
-Performance Benchmark
-========================================
-
-Testing SLUB allocator...
-  Time: 140000 cycles
-  Per allocation: 140.00 cycles
-
-Testing PMM (page allocation)...
-  Time: 5000000 cycles
-  Per allocation: 5000.00 cycles
-
-========================================
-SLUB is 35.71x faster than PMM for small objects
-========================================
-```
-
----
 
 ## 数据结构详解
 
-### 1. 全局架构
+### 全局架构
 
 ```
 slub_caches[8] → [kmalloc-16, kmalloc-32, ..., kmalloc-2048]
@@ -1181,36 +1630,16 @@ slub_caches[8] → [kmalloc-16, kmalloc-32, ..., kmalloc-2048]
                      └── slab_cache (所属缓存指针)
 ```
 
----
+SLUB 采用三层结构管理内存，旨在实现**快速路径（CPU 本地）**和**慢速路径（全局/节点）**的分离。
 
-### 2. 内存开销分析
+| 结构名称                 | 核心字段                                   | 职责/功能                                                    |
+| ------------------------ | ------------------------------------------ | ------------------------------------------------------------ |
+| **`kmem_cache`**         | `cpu`, `node`, `size`                      | **顶层缓存池**。定义特定大小（如 64B）的对象池。将管理职责分派给 CPU 和 NODE。 |
+| **`kmem_cache_cpu`**     | `freelist`, `page`                         | **快速路径**。每个 CPU 独享，实现无锁 O(1) 分配。`freelist` 是 LIFO 栈；`page` 是当前活跃的 Slab 页。 |
+| **`kmem_cache_node`**    | `partial`, `nr_partial`                    | **慢速路径**。全局（或 NUMA 节点）管理。`partial` 链表存储所有**部分空闲**的 Slab 页，作为本地缓存耗尽时的备用来源。 |
+| **`struct Page` (扩展)** | `s_mem`, `freelist`, `inuse`, `slab_cache` | **Slab 容器**。将 PMM 的页结构扩展为 SLUB 的 Slab 容器，存储页内对象的空闲链表和状态。 |
 
-#### 全局数据
-```c
-struct kmem_cache slub_caches[8];  // 8 × 128B = 1KB
-```
-
-#### per-Page 开销
-```c
-struct Page {
-    // PMM 原有字段...
-    
-    // SLUB 扩展字段（28 字节）
-    void *s_mem;                  // 8B
-    void *freelist;               // 8B
-    unsigned short inuse;         // 2B
-    unsigned short objects;       // 2B
-    struct kmem_cache *slab_cache;// 8B
-};
-```
-
-**总开销**：
-- 32768 页 × 28 字节 = 896 KB
-- 占 128MB 的 **0.68%**（可接受）
-
----
-
-### 3. 对象内存布局
+### 对象内存布局
 
 #### 64B 对象在 4096B 页中
 ```
@@ -1238,12 +1667,7 @@ page->objects = 64
 page->inuse = 0
 ```
 
-**对象开销**：
-- 每个对象前 8 字节用作 freelist 指针
-- 小对象（16B）：开销 50%（8/16）
-- 大对象（2048B）：开销 0.39%（8/2048）
-
----
+**设计要点：** SLUB 避免了额外的元数据结构，而是利用**空闲对象自身的内存空间**来存储 freelist 指针。**实现：** 将 8 字节的指针 (`void *`) 存储在对象内存的**起始位置**。
 
 ## 算法流程详解
 
@@ -1277,9 +1701,19 @@ page->inuse = 0
 [再次快速] cpu_pop() → 返回对象
 ```
 
----
+分配流程是分层和有优先级的，体现了 CPU→Partial→PMM 的查找顺序。
 
-### 2. 释放完整流程
+1. **路由层：** `slub_alloc(size)` 将请求路由到最匹配的 kmem_cache。
+2. **快速路径 (90% 命中率)：** 检查 cache→cpu→freelist。如果非空，直接 cpu_pop 返回。
+3. **慢速路径 (Refill)：** 如果本地 freelist 为空，触发 `refill_cpu_freelist()`：
+   - **获取 Slab (`acquire_slab`)：** 优先级查找：
+     1. 当前 CPU 页 (cache→cpu→page) 是否有空闲。
+     2. NODE 级 partial 链表是否有空闲页。
+     3. 通过 allocate_slab() 从 PMM 获取新页并初始化。
+   - **批量迁移：** 将 Slab 页内的 freelist 对象批量 (SLUB_CPU_BATCH=8) 移动到 CPU 本地 freelist 中。
+4. **返回：** 从新填充的 CPU freelist 中 cpu_pop() 返回对象。
+
+### 释放完整流程
 
 ```
 [应用层] slub_free(object)
@@ -1310,136 +1744,23 @@ page->inuse = 0
                                └─ add_partial(cache, page)
 ```
 
----
+释放流程关键在于**识别** Slab 页并进行**状态维护**。
 
-### 3. 页状态转换
+1. **识别层：** slub_free(object) 通过 virt_to_page 确定对象所属的页 Page。
+2. **页类型判断：** 如果 Page→flags 没有 PG_slab，则直接归还给 PMM (`free_page`)。否则进入 kmem_cache_free。
+3. **分支判断：** 决定归还位置。
+   - **分支 A (CPU 活跃页)：** 归还给 cache→cpu→freelist，并立即检查 flush_cpu_freelist 确保不超限。
+   - **分支 B (非活跃页)：** 归还给 page→freelist (页内链表)。
+4. **状态维护与回收：**
+   - **Full→Partial：** 如果 inuse 减少，且 0<inuse<objects，通过 add_partial 加入慢速路径。
+   - **Partial→Empty：** 如果 inuse=0，立即通过 remove_partial 移除并 free_slab 释放到 PMM。
 
-```
-               allocate_slab()
-                     ↓
-              ┌──────────────┐
-              │  空闲 (empty) │
-              │  inuse = 0    │
-              └──────────────┘
-                     ↓ alloc
-              ┌──────────────┐
-              │部分使用(partial)│
-              │0 < inuse < N  │ ←──┐
-              └──────────────┘    │
-                ↓ alloc      ↑    │
-                             │free│
-              ┌──────────────┐    │
-              │  满载 (full)  │    │
-              │  inuse = N    │ ───┘
-              └──────────────┘
-                     ↓ free all
-              ┌──────────────┐
-              │  空闲 (empty) │
-              └──────────────┘
-                     ↓
-                free_slab()
-```
+### 页状态转换
 
-**状态管理策略**：
-- **Empty → Partial**：首次分配，保留在内存
-- **Partial → Full**：从 partial 链表移除
-- **Full → Partial**：加入 partial 链表
-- **Partial → Empty**：立即释放到 PMM（避免内存浪费）
+SLUB 通过精确管理 Slab 页的三种状态，实现了高效的内存复用和及时回收。
 
-## 集成
-
-### 修改 memlayout.h
-
-在 `struct Page` 中添加 SLUB 字段：
-
-```c
-struct Page {
-    int ref;                        // 页引用计数
-    uint64_t flags;                 // 页标志
-    unsigned int property;          // 连续空闲页数
-    list_entry_t page_link;         // 空闲链表节点
-    
-    // ========== SLUB 扩展字段（学号：2312325）==========
-    void *s_mem;                   // slab 中第一个对象的地址
-    void *freelist;                // 空闲对象链表头
-    unsigned short inuse;          // 已分配对象数量
-    unsigned short objects;        // slab 中总对象数
-    struct kmem_cache *slab_cache; // 所属的 kmem_cache
-};
-```
-
-### 修改 Makefile
-
-```makefile
-# 添加 SLUB 源文件
-KERN_SRCFILES += \
-    kern/mm/slub.c \
-    kern/mm/slub_test.c
-
-# 可选：启用测试
-KCFLAGS += -DSLUB_TEST_ON_INIT
-```
-
-### 修改 init.c
-
-```c
-void kern_init(void) {
-    extern char edata[], end[];
-    memset(edata, 0, end - edata);
-    
-    const char *message = "Initializing kernel...\n";
-    cprintf("%s\n\n", message);
-    
-    // 1. 初始化物理内存管理
-    pmm_init();
-    
-    // 2. 初始化 SLUB（学号：2312325）
-    slub_init();
-    
-    // 3. 可选：运行测试
-    #ifdef SLUB_TEST_ON_INIT
-    slub_test();
-    #endif
-    
-    // 4. 打印内存状态
-    cprintf("Free pages: %d\n", nr_free_pages());
-    slub_print_stats();
-    
-    // ... 其他初始化 ...
-}
-```
-
-### 在代码中使用
-
-#### 方式一：通用接口
-
-```c
-#include <slub.h>
-
-// 分配内存
-char *buffer = (char *)slub_alloc(256);
-strcpy(buffer, "Hello, SLUB!");
-
-// 释放内存
-slub_free(buffer);
-```
-
-#### 方式二：专用缓存
-
-```c
-#include <slub.h>
-
-// 创建专用缓存
-struct kmem_cache *my_cache;
-my_cache = kmem_cache_create("my_struct", sizeof(struct my_data), 0);
-
-// 分配对象
-struct my_data *obj = kmem_cache_alloc(my_cache);
-// ... 使用 ...
-
-// 释放对象
-kmem_cache_free(my_cache, obj);
-
-// 销毁缓存
-kmem_cache_destroy(my_cache);
-```
+| 状态                   | inuse 范围 | 所属链表                | 触发转换事件                             | 策略                                              |
+| ---------------------- | ---------- | ----------------------- | ---------------------------------------- | ------------------------------------------------- |
+| **空闲 (Empty)**       | inuse=0    | PMM 链表                | allocate_slab()                          | 准备使用（或归还 PMM）。                          |
+| **部分使用 (Partial)** | 0<inuse<N  | kmem_cache_node→partial | Full→Partial (释放) Empty→Partial (分配) | 挂入 partial 链表，作为 refill 的**首选来源**。   |
+| **满载 (Full)**        | inuse=N    | 不在任何链表            | Partial→Full (分配)                      | 暂停管理，直到对象被释放，重新回到 Partial 状态。 |
