@@ -918,7 +918,7 @@ Continued after breakpoint
 ========== Exception Tests Completed ==========
 ```
 
-​	对于非法指令测试，ret 是 M 模式的返回指令。在S 模式下执行 mret 是非法的，会触发 Illegal Instruction 异常。这符合 RISC-V Privileged ISA 规范：特权指令在低权限模式下非法。程序能捕获后打印类型和地址（tf->epc），然后 tf->epc += 4; 跳过 4 字节（mret 是标准指令长度），允许程序继续执行到下一条 cprintf。这实现了“非致命”异常恢复，代码逻辑无误。
+​	对于非法指令测试，mret 是 M 模式的返回指令。在S 模式下执行 mret 是非法的，会触发 Illegal Instruction 异常。这符合 RISC-V Privileged ISA 规范：特权指令在低权限模式下非法。程序能捕获后打印类型和地址（tf->epc），然后 tf->epc += 4; 跳过 4 字节（mret 是标准指令长度），允许程序继续执行到下一条 cprintf。这实现了“非致命”异常恢复，代码逻辑无误。
 
 ​	对于断点异常测试，ebreak 指令专用于触发 Breakpoint 异常。在 S 模式下执行会正确路由到 exception_handler。代码可以打印类型和地址，然后 tf->epc += 2; 跳过 2 字节。然后继续执行到下一条 cprintf，证明恢复成功。
 
