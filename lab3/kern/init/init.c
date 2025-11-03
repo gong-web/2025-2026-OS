@@ -35,6 +35,22 @@ int kern_init(void) {
     clock_init();   // init clock interrupt
     intr_enable();  // enable irq interrupt
 
+    // --------LAB3 CHALLENGE3: 测试异常处理 2312145--------------------------------------
+    cprintf("\n========== Testing Exception Handlers ==========\n");
+    
+    // 测试非法指令异常 (mret)
+    cprintf("Testing illegal instruction (mret)...\n");
+    asm volatile("mret");
+    cprintf("Continued after illegal instruction\n\n");
+    
+    // 测试断点异常 (ebreak)
+    cprintf("Testing breakpoint (ebreak)...\n");
+    asm volatile("ebreak");
+    cprintf("Continued after breakpoint\n");
+    
+    cprintf("========== Exception Tests Completed ==========\n\n");
+    // ---------------------------------------------------------------------------------
+    
     /* do nothing */
     while (1)
         ;
