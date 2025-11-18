@@ -204,7 +204,7 @@ void proc_run(struct proc_struct *proc)
 {
     if (proc != current)
     {
-        // LAB4:EXERCISE3 YOUR CODE
+        // LAB4:EXERCISE3 2312325
         /*
          * Some Useful MACROs, Functions and DEFINEs, you can use them in below implementation.
          * MACROs or Functions:
@@ -213,7 +213,17 @@ void proc_run(struct proc_struct *proc)
          *   lsatp():                   Modify the value of satp register
          *   switch_to():              Context switching between two processes
          */
-
+        bool intr_flag;
+        struct proc_struct *prev = current, *next = proc;
+        local_intr_save(intr_flag);
+        {
+            current = proc;
+            // 切换页表：设置新进程的页目录表地址到satp寄存器
+            lsatp(proc->pgdir);
+            // 切换上下文：从当前进程切换到新进程
+            switch_to(&(prev->context), &(next->context));
+        }
+        local_intr_restore(intr_flag);
     }
 }
 
@@ -301,15 +311,19 @@ copy_mm(uint32_t clone_flags, struct proc_struct *proc)
 static void
 copy_thread(struct proc_struct *proc, uintptr_t esp, struct trapframe *tf)
 {
+    // ① trapframe 位置：放在内核栈顶
     proc->tf = (struct trapframe *)(proc->kstack + KSTACKSIZE - sizeof(struct trapframe));
-    *(proc->tf) = *tf;
+    *(proc->tf) = *tf; //解引用赋值： 复制父进程的寄存器现场
 
-    // Set a0 to 0 so a child process knows it's just forked
+    // ② 子进程返回值 = 0
     proc->tf->gpr.a0 = 0;
+
+    // ③ 设置用户态栈指针 SP
     proc->tf->gpr.sp = (esp == 0) ? (uintptr_t)proc->tf : esp;
 
-    proc->context.ra = (uintptr_t)forkret;
-    proc->context.sp = (uintptr_t)(proc->tf);
+    // ④ 设置调度时使用的 context（切换到 forkret）
+    proc->context.ra = (uintptr_t)forkret;  // ra = 返回地址
+    proc->context.sp = (uintptr_t)(proc->tf);  // context 的栈 = trapframe 位置
 }
 
 /* do_fork -     parent process for a new child process
@@ -326,7 +340,7 @@ int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf)
         goto fork_out;
     }
     ret = -E_NO_MEM;
-    // LAB4:EXERCISE2 YOUR CODE
+    // LAB4:EXERCISE2 2312325
     /*
      * Some Useful MACROs, Functions and DEFINEs, you can use them in below implementation.
      * MACROs or Functions:
@@ -345,12 +359,39 @@ int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf)
      */
 
     //    1. call alloc_proc to allocate a proc_struct
+    if ((proc = alloc_proc()) == NULL) {
+        goto fork_out;
+    }
+    
     //    2. call setup_kstack to allocate a kernel stack for child process
+    if (setup_kstack(proc) != 0) {
+        goto bad_fork_cleanup_proc;
+    }
+    
     //    3. call copy_mm to dup OR share mm according clone_flag
+    if (copy_mm(clone_flags, proc) != 0) {
+        goto bad_fork_cleanup_kstack;
+    }
+    
     //    4. call copy_thread to setup tf & context in proc_struct
+    copy_thread(proc, stack, tf);
+    
     //    5. insert proc_struct into hash_list && proc_list
+    bool intr_flag;
+    local_intr_save(intr_flag);
+    {
+        proc->pid = get_pid();
+        hash_proc(proc);
+        list_add(&proc_list, &(proc->list_link));
+        nr_process++;
+    }
+    local_intr_restore(intr_flag);
+    
     //    6. call wakeup_proc to make the new child process RUNNABLE
-    //    7. set ret vaule using child proc's pid
+    wakeup_proc(proc);
+    
+    //    7. set ret value using child proc's pid
+    ret = proc->pid;
     
 fork_out:
     return ret;
