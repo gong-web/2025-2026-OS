@@ -204,7 +204,9 @@ MAKEOPTS		:= --quiet --no-print-directory
 
 grade:
 	$(V)$(MAKE) $(MAKEOPTS) clean
-	$(V)$(SH) tools/grade.sh
+	$(V)$(TR) -d '\r' < tools/grade.sh > tools/grade_fixed.sh
+	$(V)$(SH) tools/grade_fixed.sh
+	$(V)$(RM) tools/grade_fixed.sh
 
 touch:
 	$(V)$(foreach f,$(TOUCH_FILES),$(TOUCH) $(f))
