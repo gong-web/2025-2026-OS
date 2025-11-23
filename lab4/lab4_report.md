@@ -546,7 +546,7 @@ intr_flag = __intr_save();
 6.  **恢复中断**：
     *   `local_intr_restore(intr_flag)`：当进程切换回来后（即 `prev` 再次变成 `current` 时），代码会从 `switch_to` 后面继续执行，此时恢复中断状态。
 
-### 5.2 关键代码实现
+### 关键代码实现
 
 ```c
 void proc_run(struct proc_struct *proc)
@@ -709,7 +709,7 @@ Total Score: 30/30
 
 ## 扩展练习 Challenge
 
-### 6.1 说明语句 `local_intr_save(intr_flag);....local_intr_restore(intr_flag);` 是如何实现开关中断的？
+### 说明语句 `local_intr_save(intr_flag);....local_intr_restore(intr_flag);` 是如何实现开关中断的？
 
 这是一个非常经典且巧妙的设计，用于在内核中实现**可嵌套的临界区保护**。
 
