@@ -218,7 +218,7 @@ int dup_mmap(struct mm_struct *to, struct mm_struct *from)
 
         insert_vma_struct(to, nvma);
 
-        bool share = 0;
+        bool share = 1;
         if (copy_range(to->pgdir, from->pgdir, vma->vm_start, vma->vm_end, share) != 0)
         {
             return -E_NO_MEM;
@@ -269,6 +269,73 @@ bool copy_to_user(struct mm_struct *mm, void *dst, const void *src, size_t len)
 void vmm_init(void)
 {
     check_vmm();
+}
+
+int do_pgfault(struct mm_struct *mm, uint32_t error_code, uintptr_t addr) {
+    int ret = -E_INVAL;
+    struct vma_struct *vma = find_vma(mm, addr);
+
+    pgfault_num++;
+    if (vma == NULL || vma->vm_start > addr) {
+        cprintf("not valid addr %x, and  can not find it in vma\n", addr);
+        goto failed;
+    }
+    
+    // error_code mapping for RISC-V (passed as cause)
+    // CAUSE_STORE_PAGE_FAULT = 15
+    
+    bool write = (error_code == CAUSE_STORE_PAGE_FAULT);
+    
+    if (write && !(vma->vm_flags & VM_WRITE)) {
+        cprintf("do_pgfault failed: write fault, but vma not writable\n");
+        goto failed;
+    }
+    // cprintf("PF: %x\n", addr);
+    
+    uint32_t perm = PTE_U;
+    if (vma->vm_flags & VM_WRITE) {
+        perm |= (PTE_R | PTE_W);
+    }
+    if (vma->vm_flags & VM_READ) {
+        perm |= PTE_R;
+    }
+    addr = ROUNDDOWN(addr, PGSIZE);
+
+    ret = -E_NO_MEM;
+
+    pte_t *ptep = NULL;
+    
+    if ((ptep = get_pte(mm->pgdir, addr, 1)) == NULL) {
+        cprintf("get_pte in do_pgfault failed\n");
+        goto failed;
+    }
+    
+    if (*ptep == 0) { 
+        if (pgdir_alloc_page(mm->pgdir, addr, perm) == NULL) {
+            cprintf("pgdir_alloc_page in do_pgfault failed\n");
+            goto failed;
+        }
+    } else {
+        if (write && (*ptep & PTE_V) && !(*ptep & PTE_W)) {
+             struct Page *page = pte2page(*ptep);
+             if (page_ref(page) > 1) {
+                 struct Page *npage = alloc_page();
+                 if (npage == NULL) goto failed;
+                 void * src_kvaddr = page2kva(page);
+                 void * dst_kvaddr = page2kva(npage);
+                 memcpy(dst_kvaddr, src_kvaddr, PGSIZE);
+                 if (page_insert(mm->pgdir, npage, addr, perm) != 0) {
+                     free_page(npage);
+                     goto failed;
+                 }
+             } else {
+                 page_insert(mm->pgdir, page, addr, perm);
+             }
+        }
+    }
+    ret = 0;
+failed:
+    return ret;
 }
 
 // check_vmm - check correctness of vmm
@@ -382,3 +449,5 @@ bool user_mem_check(struct mm_struct *mm, uintptr_t addr, size_t len, bool write
     }
     return KERN_ACCESS(addr, addr + len);
 }
+
+volatile unsigned int pgfault_num = 0;

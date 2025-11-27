@@ -18,12 +18,16 @@
 
 #define TICK_NUM 100
 
+static int ticks_count = 0;
+static int print_count = 0;
+
 static void print_ticks()
 {
     cprintf("%d ticks\n", TICK_NUM);
+    // for (int i = 0; i < 10000; i++); // Delay
 #ifdef DEBUG_GRADE
-    cprintf("End of Test.\n");
-    panic("EOT: kernel seems ok.");
+    // cprintf("End of Test.\n");
+    // panic("EOT: kernel seems ok.");
 #endif
 }
 
@@ -132,17 +136,25 @@ void interrupt_handler(struct trapframe *tf)
             
         // 计数器加一
         ticks_count++;
-            
+        
+        // 每次时钟中断都尝试调度
+        // if (current != NULL) {
+        //     current->need_resched = 1;
+        // }
+
         // 当计数器达到100时，输出"100 ticks"并重置计数器
-        if (ticks_count == 100) {
-            print_ticks();
+        if (ticks_count == TICK_NUM) {
+            // print_ticks();
             ticks_count = 0;  // 重置计数器
             print_count++;    // 打印次数加一
+            if (current != NULL) {
+                current->need_resched = 1;
+            }
                 
             // 当打印次数达到10时，关机
-            if (print_count == 10) {
-                sbi_shutdown();
-            }
+            // if (print_count == 10) {
+            //     sbi_shutdown();
+            // }
         }
         break;
     case IRQ_H_TIMER:
@@ -222,12 +234,39 @@ void exception_handler(struct trapframe *tf)
         break;
     case CAUSE_FETCH_PAGE_FAULT:
         cprintf("Instruction page fault\n");
+        if ((ret = do_pgfault(current->mm, tf->cause, tf->tval)) != 0) {
+            if (trap_in_kernel(tf)) {
+                print_trapframe(tf);
+                panic("do_pgfault failed");
+            } else {
+                cprintf("user page fault failed, pid=%d, name=%s\n", current->pid, current->name);
+                do_exit(-E_KILLED);
+            }
+        }
         break;
     case CAUSE_LOAD_PAGE_FAULT:
         cprintf("Load page fault\n");
+        if ((ret = do_pgfault(current->mm, tf->cause, tf->tval)) != 0) {
+            if (trap_in_kernel(tf)) {
+                print_trapframe(tf);
+                panic("do_pgfault failed");
+            } else {
+                cprintf("user page fault failed, pid=%d, name=%s\n", current->pid, current->name);
+                do_exit(-E_KILLED);
+            }
+        }
         break;
     case CAUSE_STORE_PAGE_FAULT:
-        cprintf("Store/AMO page fault\n");
+        // cprintf("Store/AMO page fault\n");
+        if ((ret = do_pgfault(current->mm, tf->cause, tf->tval)) != 0) {
+            if (trap_in_kernel(tf)) {
+                print_trapframe(tf);
+                panic("do_pgfault failed");
+            } else {
+                cprintf("user page fault failed, pid=%d, name=%s\n", current->pid, current->name);
+                do_exit(-E_KILLED);
+            }
+        }
         break;
     default:
         print_trapframe(tf);

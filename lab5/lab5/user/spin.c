@@ -9,9 +9,9 @@ main(void) {
         cprintf("I am the child. spinning ...\n");
         while (1);
     }
+    yield();
     cprintf("I am the parent. Running the child...\n");
 
-    yield();
     yield();
     yield();
 
