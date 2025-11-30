@@ -7,6 +7,7 @@
 #include <pmm.h>
 #include <riscv.h>
 #include <kmalloc.h>
+#include <sched.h>
 
 /*
   vmm design include two parts: mm_struct (mm) & vma_struct (vma)
@@ -285,9 +286,25 @@ int do_pgfault(struct mm_struct *mm, uint32_t error_code, uintptr_t addr) {
     // CAUSE_STORE_PAGE_FAULT = 15
     
     bool write = (error_code == CAUSE_STORE_PAGE_FAULT);
-    
+    /* Protect the COW handling by serializing mm modifications.
+     * Note: do_pgfault runs in trap context; avoid blocking calls that
+     * may call schedule(). Use try_lock spinning to acquire mm_lock. */
+    int spin_count = 0;
+    while (!try_lock(&(mm->mm_lock)))
+    {
+        spin_count++;
+        if (spin_count > 300) {
+            schedule();
+            spin_count = 0;
+        }
+    }
+
+    // [Security Check] Dirty COW Protection
+    // We must check the VMA permissions (vma->vm_flags) to ensure the process
+    // is actually allowed to write to this address.
     if (write && !(vma->vm_flags & VM_WRITE)) {
         cprintf("do_pgfault failed: write fault, but vma not writable\n");
+        unlock_mm(mm);
         goto failed;
     }
     // cprintf("PF: %x\n", addr);
@@ -307,33 +324,43 @@ int do_pgfault(struct mm_struct *mm, uint32_t error_code, uintptr_t addr) {
     
     if ((ptep = get_pte(mm->pgdir, addr, 1)) == NULL) {
         cprintf("get_pte in do_pgfault failed\n");
+        unlock_mm(mm);
         goto failed;
     }
     
     if (*ptep == 0) { 
         if (pgdir_alloc_page(mm->pgdir, addr, perm) == NULL) {
             cprintf("pgdir_alloc_page in do_pgfault failed\n");
+            unlock_mm(mm);
             goto failed;
         }
     } else {
+        // [COW Implementation]
+        // If the PTE is valid (*ptep & PTE_V) but not writable (!(*ptep & PTE_W)),
+        // and it's a write fault (write == true), then it's a Copy-On-Write case.
+        // Note: We already checked vma->vm_flags & VM_WRITE above, so we know
+        // the process *should* be able to write. The fact that PTE is RO means
+        // it's a shared COW page.
         if (write && (*ptep & PTE_V) && !(*ptep & PTE_W)) {
              struct Page *page = pte2page(*ptep);
              if (page_ref(page) > 1) {
                  struct Page *npage = alloc_page();
-                 if (npage == NULL) goto failed;
+                 if (npage == NULL) { unlock_mm(mm); goto failed; }
                  void * src_kvaddr = page2kva(page);
                  void * dst_kvaddr = page2kva(npage);
                  memcpy(dst_kvaddr, src_kvaddr, PGSIZE);
                  if (page_insert(mm->pgdir, npage, addr, perm) != 0) {
                      free_page(npage);
-                     goto failed;
+                    unlock_mm(mm);
+                    goto failed;
                  }
              } else {
-                 page_insert(mm->pgdir, page, addr, perm);
+                page_insert(mm->pgdir, page, addr, perm);
              }
         }
     }
     ret = 0;
+    unlock_mm(mm);
 failed:
     return ret;
 }

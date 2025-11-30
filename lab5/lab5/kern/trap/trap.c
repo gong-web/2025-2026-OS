@@ -16,7 +16,7 @@
 #include <sync.h>
 #include <sbi.h>
 
-#define TICK_NUM 100
+#define TICK_NUM 1000
 
 static int ticks_count = 0;
 static int print_count = 0;

@@ -150,15 +150,13 @@ set_page_ref(struct Page *page, int val)
 static inline int
 page_ref_inc(struct Page *page)
 {
-    page->ref += 1;
-    return page->ref;
+    return __sync_add_and_fetch(&page->ref, 1);
 }
 
 static inline int
 page_ref_dec(struct Page *page)
 {
-    page->ref -= 1;
-    return page->ref;
+    return __sync_sub_and_fetch(&page->ref, 1);
 }
 
 static inline void flush_tlb()

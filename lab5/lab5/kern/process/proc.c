@@ -393,11 +393,14 @@ copy_mm(uint32_t clone_flags, struct proc_struct *proc)
     {
         goto bad_pgdir_cleanup_mm;
     }
+    bool intr_flag;
+    local_intr_save(intr_flag);
     lock_mm(oldmm);
     {
         ret = dup_mmap(mm, oldmm);
     }
     unlock_mm(oldmm);
+    local_intr_restore(intr_flag);
 
     if (ret != 0)
     {

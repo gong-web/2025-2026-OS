@@ -273,8 +273,7 @@ static inline void page_remove_pte(pde_t *pgdir, uintptr_t la, pte_t *ptep)
     if (*ptep & PTE_V)
     {
         struct Page *page = pte2page(*ptep);
-        page_ref_dec(page);
-        if (page_ref(page) == 0)
+        if (page_ref_dec(page) == 0)
         {
             free_page(page);
         }
@@ -424,6 +423,10 @@ int copy_range(pde_t *to, pde_t *from, uintptr_t start, uintptr_t end,
              */
             if (share) {
                 free_page(npage);
+                // [COW Implementation]
+                // Map the same page to both parent and child, but mark it Read-Only.
+                // This triggers a Page Fault when either process tries to write,
+                // allowing do_pgfault to perform the Copy-On-Write.
                 page_insert(from, page, start, perm & (~PTE_W));
                 ret = page_insert(to, page, start, perm & (~PTE_W));
             } else {
