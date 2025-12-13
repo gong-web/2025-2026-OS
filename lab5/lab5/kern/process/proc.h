@@ -7,19 +7,21 @@
 #include <memlayout.h>
 
 // process's state in his life cycle
+// 进程生命周期中的状态
 enum proc_state
 {
-    PROC_UNINIT = 0, // uninitialized
-    PROC_SLEEPING,   // sleeping
-    PROC_RUNNABLE,   // runnable(maybe running)
-    PROC_ZOMBIE,     // almost dead, and wait parent proc to reclaim his resource
+    PROC_UNINIT = 0, // uninitialized (未初始化)
+    PROC_SLEEPING,   // sleeping (睡眠/阻塞状态)
+    PROC_RUNNABLE,   // runnable(maybe running) (就绪/运行状态)
+    PROC_ZOMBIE,     // almost dead, and wait parent proc to reclaim his resource (僵尸状态: 已退出但资源未回收)
 };
 
+// 上下文结构体 (用于进程切换，保存被调用者保存寄存器)
 struct context
 {
-    uintptr_t ra;
-    uintptr_t sp;
-    uintptr_t s0;
+    uintptr_t ra;  // 返回地址
+    uintptr_t sp;  // 栈指针
+    uintptr_t s0;  // 保存寄存器 s0-s11
     uintptr_t s1;
     uintptr_t s2;
     uintptr_t s3;
@@ -39,31 +41,32 @@ struct context
 
 extern list_entry_t proc_list;
 
+// 进程控制块 (PCB)
 struct proc_struct
 {
-    enum proc_state state;                  // Process state
-    int pid;                                // Process ID
-    int runs;                               // the running times of Proces
-    uintptr_t kstack;                       // Process kernel stack
-    volatile bool need_resched;             // bool value: need to be rescheduled to release CPU?
-    struct proc_struct *parent;             // the parent process
-    struct mm_struct *mm;                   // Process's memory management field
-    struct context context;                 // Switch here to run process
-    struct trapframe *tf;                   // Trap frame for current interrupt
-    uintptr_t pgdir;                        // the base addr of Page Directroy Table(PDT)
-    uint32_t flags;                         // Process flag
-    char name[PROC_NAME_LEN + 1];           // Process name
-    list_entry_t list_link;                 // Process link list
-    list_entry_t hash_link;                 // Process hash list
-    int exit_code;                          // exit code (be sent to parent proc)
-    uint32_t wait_state;                    // waiting state
-    struct proc_struct *cptr, *yptr, *optr; // relations between processes
+    enum proc_state state;                  // Process state (进程状态)
+    int pid;                                // Process ID (进程 ID)
+    int runs;                               // the running times of Proces (运行次数/时间片)
+    uintptr_t kstack;                       // Process kernel stack (内核栈基址)
+    volatile bool need_resched;             // bool value: need to be rescheduled to release CPU? (是否需要调度)
+    struct proc_struct *parent;             // the parent process (父进程指针)
+    struct mm_struct *mm;                   // Process's memory management field (内存管理描述符)
+    struct context context;                 // Switch here to run process (进程上下文，用于 switch_to)
+    struct trapframe *tf;                   // Trap frame for current interrupt (中断帧，保存用户态寄存器)
+    uintptr_t pgdir;                        // the base addr of Page Directroy Table(PDT) (页目录基地址 - 物理地址)
+    uint32_t flags;                         // Process flag (进程标志)
+    char name[PROC_NAME_LEN + 1];           // Process name (进程名称)
+    list_entry_t list_link;                 // Process link list (全部进程链表节点)
+    list_entry_t hash_link;                 // Process hash list (PID 哈希表节点)
+    int exit_code;                          // exit code (be sent to parent proc) (退出码)
+    uint32_t wait_state;                    // waiting state (等待状态原因)
+    struct proc_struct *cptr, *yptr, *optr; // relations between processes (进程关系: child, younger_sibling, older_sibling)
 };
 
-#define PF_EXITING 0x00000001 // getting shutdown
+#define PF_EXITING 0x00000001 // getting shutdown (进程正在退出)
 
-#define WT_CHILD (0x00000001 | WT_INTERRUPTED)
-#define WT_INTERRUPTED 0x80000000 // the wait state could be interrupted
+#define WT_CHILD (0x00000001 | WT_INTERRUPTED) // 等待子进程
+#define WT_INTERRUPTED 0x80000000 // the wait state could be interrupted (等待可被中断)
 
 #define le2proc(le, member) \
     to_struct((le), struct proc_struct, member)

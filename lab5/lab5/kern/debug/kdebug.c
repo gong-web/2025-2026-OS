@@ -9,12 +9,19 @@
  * */
 void print_kerninfo(void)
 {
+    // etext: 代码段结束地址, edata: 数据段结束地址, end: 内核结束地址, kern_init: 内核入口地址
+    // 这些符号是在链接脚本(tools/kernel.ld)中定义的
     extern char etext[], edata[], end[], kern_init[];
+    
+    // 打印内核的特殊符号地址信息
     cprintf("Special kernel symbols:\n");
-    cprintf("  entry  0x%08x (virtual)\n", kern_init);
-    cprintf("  etext  0x%08x (virtual)\n", etext);
-    cprintf("  edata  0x%08x (virtual)\n", edata);
-    cprintf("  end    0x%08x (virtual)\n", end);
+    cprintf("  entry  0x%08x (virtual)\n", kern_init); // 内核入口虚拟地址
+    cprintf("  etext  0x%08x (virtual)\n", etext);     // 代码段结束虚拟地址
+    cprintf("  edata  0x%08x (virtual)\n", edata);     // 数据段结束虚拟地址
+    cprintf("  end    0x%08x (virtual)\n", end);       // 内核结束虚拟地址
+    
+    // 计算并打印内核可执行内存的占用大小 (单位: KB)
+    // (end - kern_init + 1023) / 1024 实现了向上取整除以1024
     cprintf("Kernel executable memory footprint: %dKB\n",
             (end - kern_init + 1023) / 1024);
 }
@@ -23,7 +30,11 @@ void print_kerninfo(void)
  * print_debuginfo - read and print the stat information for the address @eip,
  * and info.eip_fn_addr should be the first address of the related function.
  * */
-void print_debuginfo(uintptr_t eip) { panic("Not Implemented!"); }
+void print_debuginfo(uintptr_t eip) { 
+    // 这里是打印调试信息的函数占位符
+    // 在本实验中未实现，如果调用会触发 panic
+    panic("Not Implemented!"); 
+}
 
 /* *
  * print_stackframe - print a list of the saved eip values from the nested
@@ -76,5 +87,8 @@ void print_debuginfo(uintptr_t eip) { panic("Not Implemented!"); }
  * */
 void print_stackframe(void)
 {
+    // 打印函数调用栈帧信息
+    // 这是一个非常有用的调试工具，可以通过遍历栈中的 ebp 指针来追踪函数调用链
+    // 但在本实验代码中未实现该功能
     panic("Not Implemented!");
 }
