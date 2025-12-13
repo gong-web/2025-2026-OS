@@ -351,11 +351,13 @@ pts=20
 run_test -prog 'cow_test' -check default_check \
     'kernel_execve: pid = 2, name = "cow_test".' \
     'Child: PASSED - COW triggered successfully' \
-    'Parent: PASSED - Data isolation successful'
+    'Parent: PASSED - Data isolation successful' \
+    'Parent: PASSED - All processes maintained isolated counters'
 
 pts=20
 run_test -prog 'dirtycow_defense_test' -check default_check \
     'kernel_execve: pid = 2, name = "dirtycow_defense_test".' \
+    'Parent: PASSED - RO VMA write blocked' \
     'Test 2: Verify permission check during COW' \
     'Parent: PASSED - Data unchanged'
 

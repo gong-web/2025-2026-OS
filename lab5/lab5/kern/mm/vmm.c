@@ -391,6 +391,13 @@ int do_pgfault(struct mm_struct *mm, uint32_t error_code, uintptr_t addr) {
         // 如果 PTE 有效且不可写，但是发生了写异常 (write=true)，且 VMA 允许写 (上面已检查)
         // 说明这是一个共享的 COW 页面。
         if (write && (*ptep & PTE_V) && !(*ptep & PTE_W)) {
+             // 只有被 copy_range 标记为 COW 的只读页，才允许进入写时复制流程。
+             // 对于真正的只读映射（例如代码段/rodata），应直接失败。
+             if (!(*ptep & PTE_COW)) {
+                 cprintf("do_pgfault failed: write fault on non-COW RO page\n");
+                 unlock_mm(mm);
+                 goto failed;
+             }
              struct Page *page = pte2page(*ptep);
              // 如果页面被多个进程引用 (引用计数 > 1)
              if (page_ref(page) > 1) {

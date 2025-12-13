@@ -8,7 +8,7 @@
 
 volatile int global_data_var = 0;
 volatile int global_array[100];
-volatile int global_counter_var = 0;
+volatile int global_counter_var = 1;
 static volatile unsigned char global_pagebuf[4096 * 4] __attribute__((aligned(4096)));
 
 // 测试用例1: 基本的COW功能测试
@@ -68,7 +68,7 @@ void test_multiple_writes() {
     int pid = fork();
     if (pid == 0) {
         // 子进程：修改多个值
-        cprintf("Child: Modifying multiple values...\n");
+        // cprintf("Child: Modifying multiple values...\n");
         for (int i = 0; i < 10; i++) {
             array[i] = i * 200;
         }
@@ -103,35 +103,67 @@ void test_multiple_writes() {
     }
 }
 
-// 测试用例3: 父子进程同时写入
+// 测试用例3: 多进程并发写入测试 (Stress Test)
 void test_concurrent_writes() {
-    cprintf("\n=== Test 3: Concurrent Writes Test ===\n");
+    cprintf("\n=== Test 3: Concurrent Writes Test (Multi-process) ===\n");
     
     volatile int *counter = &global_counter_var;
     *counter = 0;
     
-    int pid = fork();
-    if (pid == 0) {
-        // 子进程：增加计数器
-        for (int i = 0; i < 100; i++) {
+    // 创建第一个子进程
+    int pid1 = fork();
+    if (pid1 == 0) {
+        // Child 1
+        cprintf("Child 1: Starting...\n");
+        for (int i = 0; i < 10000; i++) {
             (*counter)++;
+            if (i % 1000 == 0) {
+                cprintf("1"); 
+                yield();
+            }
         }
-        cprintf("Child: Final counter = %d (should be 100)\n", *counter);
-        exit(*counter == 100 ? 0 : -1);
-    } else if (pid > 0) {
-        // 父进程：也增加计数器
-        for (int i = 0; i < 100; i++) {
+        cprintf("\nChild 1: Done. Final = %d\n", *counter);
+        exit(*counter == 10000 ? 0 : -1);
+    }
+    
+    // 创建第二个子进程
+    int pid2 = fork();
+    if (pid2 == 0) {
+        // Child 2
+        cprintf("Child 2: Starting...\n");
+        for (int i = 0; i < 10000; i++) {
             (*counter)++;
+            if (i % 1000 == 0) {
+                cprintf("2");
+                yield();
+            }
         }
+        cprintf("\nChild 2: Done. Final = %d\n", *counter);
+        exit(*counter == 10000 ? 0 : -1);
+    }
+
+    // 父进程也参与竞争
+    if (pid1 > 0 && pid2 > 0) {
+        cprintf("Parent: Starting...\n");
+        for (int i = 0; i < 10000; i++) {
+            (*counter)++;
+            if (i % 1000 == 0) {
+                cprintf("P");
+                yield();
+            }
+        }
+        cprintf("\n");
         
-        int exit_code;
-        waitpid(pid, &exit_code);
+        int exit_code1, exit_code2;
+        waitpid(pid1, &exit_code1);
+        waitpid(pid2, &exit_code2);
         
-        cprintf("Parent: Final counter = %d (should be 100)\n", *counter);
-        if (*counter == 100) {
-            cprintf("Parent: PASSED - Independent counters work correctly\n");
+        cprintf("Parent: Final counter = %d (should be 10000)\n", *counter);
+        
+        if (*counter == 10000 && exit_code1 == 0 && exit_code2 == 0) {
+            cprintf("Parent: PASSED - All processes maintained isolated counters\n");
         } else {
-            cprintf("Parent: FAILED - Counter value incorrect\n");
+            cprintf("Parent: FAILED - Counter is %d, Child1 exit: %d, Child2 exit: %d\n", *counter, exit_code1, exit_code2);
         }
     }
 }

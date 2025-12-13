@@ -443,6 +443,11 @@ int copy_range(pde_t *to, pde_t *from, uintptr_t start, uintptr_t end,
                     uint32_t cow_perm = (perm & (~PTE_W)) | PTE_COW;
                     page_insert(from, page, start, cow_perm);
                     ret = page_insert(to, page, start, cow_perm);
+                } else if (*ptep & PTE_COW) {
+                    // 如果源 PTE 已经是 COW (PTE_W=0, PTE_COW=1)，说明是多重 fork。
+                    // 必须保留 PTE_COW 标记，否则子进程会得到一个普通的只读页，导致写入时无法触发 COW。
+                    uint32_t cow_perm = perm | PTE_COW;
+                    ret = page_insert(to, page, start, cow_perm);
                 } else {
                     ret = page_insert(to, page, start, perm);
                 }
