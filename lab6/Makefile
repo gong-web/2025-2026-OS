@@ -211,24 +211,17 @@ TARGETS: $(TARGETS)
 
 .DEFAULT_GOAL := TARGETS
 
-QEMUOPTS = -hda $(UCOREIMG) -drive file=$(SWAPIMG),media=disk,cache=writeback
+QEMUOPTS = -machine virt \
+		   -bios default \
+		   -device loader,file=$(UCOREIMG),addr=0x80200000
 
 .PHONY: qemu spike
-qemu: $(UCOREIMG) $(SWAPIMG) $(SFSIMG)
+qemu: $(UCOREIMG)
 #	$(V)$(QEMU) -kernel $(UCOREIMG) -nographic
-	$(V)$(QEMU) \
-		-machine virt \
-		-nographic \
-		-bios default \
-		-device loader,file=$(UCOREIMG),addr=0x80200000
+	$(V)$(QEMU) $(QEMUOPTS) -nographic
 
-debug: $(UCOREIMG) $(SWAPIMG) $(SFSIMG)
-	$(V)$(QEMU) \
-		-machine virt \
-		-nographic \
-		-bios default \
-		-device loader,file=$(UCOREIMG),addr=0x80200000\
-		-s -S
+debug: $(UCOREIMG)
+	$(V)$(QEMU) $(QEMUOPTS) -nographic -s -S
 
 gdb:
 	riscv64-unknown-elf-gdb \

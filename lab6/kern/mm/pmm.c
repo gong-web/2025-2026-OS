@@ -424,7 +424,16 @@ int copy_range(pde_t *to, pde_t *from, uintptr_t start, uintptr_t end,
              * (3) memory copy from src_kvaddr to dst_kvaddr, size is PGSIZE
              * (4) build the map of phy addr of  nage with the linear addr start
              */
-            
+
+            void *src_kvaddr = page2kva(page);
+            void *dst_kvaddr = page2kva(npage);
+            memcpy(dst_kvaddr, src_kvaddr, PGSIZE);
+            ret = page_insert(to, npage, start, perm);
+            if (ret != 0)
+            {
+                free_page(npage);
+                return ret;
+            }
             assert(ret == 0);
         }
         start += PGSIZE;
@@ -471,7 +480,19 @@ int page_insert(pde_t *pgdir, struct Page *page, uintptr_t la, uint32_t perm)
             page_remove_pte(pgdir, la, ptep);
         }
     }
-    *ptep = pte_create(page2ppn(page), PTE_V | perm);
+    /*
+     * RISC-V requires Accessed/Dirty bits to be set, otherwise the CPU may raise
+     * page-fault exceptions on any access (including instruction fetch).
+     *
+     * Some QEMU versions don't automatically update A/D bits, so set them in
+     * software when establishing the mapping.
+     */
+    uint32_t ad_bits = PTE_A;
+    if (perm & PTE_W)
+    {
+        ad_bits |= PTE_D;
+    }
+    *ptep = pte_create(page2ppn(page), PTE_V | perm | ad_bits);
     tlb_invalidate(pgdir, la);
     return 0;
 }
