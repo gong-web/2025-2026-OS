@@ -1926,7 +1926,7 @@ kernel panic at kern/process/proc.c:564:
 
 最后测试结果也是50/50满分！
 
-<img src="assets/image-20251221124709544.png" alt="image-20251221124709544" style="zoom:67%;" />
+![image-20251221124709544](assets/image-20251221124709544.png)
 
 ### 证明Stride算法为什么保证比例公平
 
