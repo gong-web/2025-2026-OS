@@ -157,7 +157,7 @@ alloc_proc(void)
         proc->time_slice = 0;
         proc->lab6_run_pool.left = proc->lab6_run_pool.right = proc->lab6_run_pool.parent = NULL;
         proc->lab6_stride = 0;
-        proc->lab6_priority = 0;
+        proc->lab6_priority = 1;
     }
     return proc;
 }
@@ -637,7 +637,7 @@ load_icode(unsigned char *binary, size_t size)
         goto bad_pgdir_cleanup_mm;
     }
     //(3) copy TEXT/DATA section, build BSS parts in binary to memory space of process
-    struct Page *page;
+    struct Page *page = NULL;
     //(3.1) get the file header of the bianry program (ELF format)
     struct elfhdr *elf = (struct elfhdr *)binary;
     //(3.2) get the entry of the program section headers of the bianry program (ELF format)

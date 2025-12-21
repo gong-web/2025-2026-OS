@@ -979,9 +979,11 @@ PROC_UNINIT -- proc_init/wakeup_proc --> PROC_RUNNABLE -- try_free_pages/do_wait
 3.  **盘点库存 (`free_list`)**：
     *   算出 `pages` 数组后面剩下的才是真正可用的**空闲内存** (`freemem`)。
     *   调用 `init_memmap` -> `default_init_memmap`，把这些空闲内存对应的 `struct Page` 挂到 **`free_list`** 链表上。
-    *   从此，`alloc_page` 就可以从 `free_list` 里拿纸（物理页），`free_page` 就把纸还回链表。
+    *   从此，`alloc_page` 就可以从 `free_list` 里拿纸（物理页），`free_page` 就把纸还回链表。4
 
-![布局图](image.png)
+<img src="assets/3ff16cdfb6dd39064b93b09d832aaa0.jpg" alt="3ff16cdfb6dd39064b93b09d832aaa0" style="zoom:20%;" />
+
+<center><b>图1 手绘布局图
 
 #### 2. 也是开天辟地：内核页表 (Boot Page Table)
 

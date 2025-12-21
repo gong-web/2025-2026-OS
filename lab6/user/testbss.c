@@ -26,7 +26,10 @@ main(void) {
     cprintf("Yes, good.  Now doing a wild write off the end...\n");
     cprintf("testbss may pass.\n");
 
-    bigarray[ARRAYSIZE + 1024] = 0;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+    *((volatile uint32_t *)bigarray + ARRAYSIZE + 1024) = 0;
+#pragma GCC diagnostic pop
     // asm volatile ("int $0x14");
     panic("FAIL: T.T\n");
 }

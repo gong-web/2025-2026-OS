@@ -401,10 +401,6 @@ int copy_range(pde_t *to, pde_t *from, uintptr_t start, uintptr_t end,
             uint32_t perm = (*ptep & PTE_USER);
             // get page from ptep
             struct Page *page = pte2page(*ptep);
-            // alloc a page for process B
-            struct Page *npage = alloc_page();
-            assert(page != NULL);
-            assert(npage != NULL);
             int ret = 0;
             /* LAB5:填写你在lab5中实现的代码
              * replicate content of page to npage, build the map of phy addr of
@@ -425,15 +421,37 @@ int copy_range(pde_t *to, pde_t *from, uintptr_t start, uintptr_t end,
              * (4) build the map of phy addr of  nage with the linear addr start
              */
 
-            void *src_kvaddr = page2kva(page);
-            void *dst_kvaddr = page2kva(npage);
-            memcpy(dst_kvaddr, src_kvaddr, PGSIZE);
-            ret = page_insert(to, npage, start, perm);
-            if (ret != 0)
-            {
-                free_page(npage);
-                return ret;
+            if (share) {
+                // [COW Implementation]
+                // 写时复制 (Copy-On-Write) 实现:
+                // 仅对“原本可写”的页面启用 COW：清除 PTE_W 并设置软件位 PTE_COW。
+                // 对只读/可执行页面（如代码段），保持原权限共享，避免破坏可执行权限。
+                if (perm & PTE_W) {
+                    uint32_t cow_perm = (perm & (~PTE_W)) | PTE_COW;
+                    page_insert(from, page, start, cow_perm);
+                    ret = page_insert(to, page, start, cow_perm);
+                } else if (*ptep & PTE_COW) {
+                    // 如果源 PTE 已经是 COW (PTE_W=0, PTE_COW=1)，说明是多重 fork。
+                    // 必须保留 PTE_COW 标记，否则子进程会得到一个普通的只读页，导致写入时无法触发 COW。
+                    uint32_t cow_perm = perm | PTE_COW;
+                    ret = page_insert(to, page, start, cow_perm);
+                } else {
+                    ret = page_insert(to, page, start, perm);
+                }
+            } else {
+                // 非共享模式 (深拷贝):
+                // alloc a page for process B
+                struct Page *npage = alloc_page();
+                assert(npage != NULL);
+                // 1. 获取源页和目标页的内核虚拟地址
+                void *src_kvaddr = page2kva(page);
+                void *dst_kvaddr = page2kva(npage);
+                // 2. 复制内存内容
+                memcpy(dst_kvaddr, src_kvaddr, PGSIZE);
+                // 3. 建立映射
+                ret = page_insert(to, npage, start, perm);
             }
+
             assert(ret == 0);
         }
         start += PGSIZE;
