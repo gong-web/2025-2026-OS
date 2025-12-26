@@ -1,15 +1,22 @@
 #include <mmu.h>
 #include <memlayout.h>
 
-    .section .text,"ax",%progbits
+    .section .text.kern_entry
     .globl kern_entry
 kern_entry:
     # a0: hartid
     # a1: dtb physical address
     # save hartid and dtb address
+    
+    # t1 := 0xffffffffc0000000 - 0x80000000
+    li      t1, 0xffffffffc0000000 - 0x80000000
+
     la t0, boot_hartid
+    sub t0, t0, t1
     sd a0, 0(t0)
+    
     la t0, boot_dtb
+    sub t0, t0, t1
     sd a1, 0(t0)
 
     # t0 := 三级页表的虚拟地址
@@ -29,6 +36,7 @@ kern_entry:
     csrw    satp, t0
     # 使用 sfence.vma 指令刷新 TLB
     sfence.vma
+    
     # 从此，我们给内核搭建出了一个完美的虚拟内存空间！
     #nop # 可能映射的位置有些bug。。插入一个nop
     
@@ -58,8 +66,12 @@ bootstacktop:
 boot_page_table_sv39:
     # 0xffffffff_c0000000 map to 0x80000000 (1G)
     # 前 511 个页表项均设置为 0 ，因此 V=0 ，意味着是空的(unmapped)
-    .zero 8 * 511
+    # .zero 8 * 511
     # 设置最后一个页表项，PPN=0x80000，标志位 VRWXAD 均为 1
+    # .quad (0x80000 << 10) | 0xcf # VRWXAD
+    .zero 8 * 2
+    .quad (0x80000 << 10) | 0xcf # VRWXAD
+    .zero 8 * 508
     .quad (0x80000 << 10) | 0xcf # VRWXAD
 
     .global boot_hartid

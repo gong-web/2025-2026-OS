@@ -23,12 +23,16 @@ copy_path(char **to, const char *from) {
     if ((buffer = kmalloc(FS_MAX_FPATH_LEN + 1)) == NULL) {
         return -E_NO_MEM;
     }
-    lock_mm(mm);
-    if (!copy_string(mm, buffer, from, FS_MAX_FPATH_LEN + 1)) {
+    if (mm != NULL) {
+        lock_mm(mm);
+        if (!copy_string(mm, buffer, from, FS_MAX_FPATH_LEN + 1)) {
+            unlock_mm(mm);
+            goto failed_cleanup;
+        }
         unlock_mm(mm);
-        goto failed_cleanup;
+    } else {
+        strncpy(buffer, from, FS_MAX_FPATH_LEN);
     }
-    unlock_mm(mm);
     *to = buffer;
     return 0;
 
@@ -79,17 +83,22 @@ sysfile_read(int fd, void *base, size_t len) {
         }
         ret = file_read(fd, buffer, alen, &alen);
         if (alen != 0) {
-            lock_mm(mm);
-            {
-                if (copy_to_user(mm, base, buffer, alen)) {
-                    assert(len >= alen);
-                    base += alen, len -= alen, copied += alen;
+            if (mm != NULL) {
+                lock_mm(mm);
+                {
+                    if (copy_to_user(mm, base, buffer, alen)) {
+                        assert(len >= alen);
+                        base += alen, len -= alen, copied += alen;
+                    }
+                    else if (ret == 0) {
+                        ret = -E_INVAL;
+                    }
                 }
-                else if (ret == 0) {
-                    ret = -E_INVAL;
-                }
+                unlock_mm(mm);
+            } else {
+                memcpy(base, buffer, alen);
+                base += alen, len -= alen, copied += alen;
             }
-            unlock_mm(mm);
         }
         if (ret != 0 || alen == 0) {
             goto out;
@@ -125,13 +134,17 @@ sysfile_write(int fd, void *base, size_t len) {
         if ((alen = IOBUF_SIZE) > len) {
             alen = len;
         }
-        lock_mm(mm);
-        {
-            if (!copy_from_user(mm, buffer, base, alen, 0)) {
-                ret = -E_INVAL;
+        if (mm != NULL) {
+            lock_mm(mm);
+            {
+                if (!copy_from_user(mm, buffer, base, alen, 0)) {
+                    ret = -E_INVAL;
+                }
             }
+            unlock_mm(mm);
+        } else {
+            memcpy(buffer, base, alen);
         }
-        unlock_mm(mm);
         if (ret == 0) {
             ret = file_write(fd, buffer, alen, &alen);
             if (alen != 0) {

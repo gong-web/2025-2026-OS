@@ -13,6 +13,18 @@ fs_init(void) {
     vfs_init();
     dev_init();
     sfs_init();
+    vfs_set_bootfs("disk0:");
+
+    // Update initproc's pwd to bootfs root
+    if (initproc != NULL && initproc->filesp != NULL) {
+        struct inode *node;
+        if (vfs_get_bootfs(&node) == 0) {
+            if (initproc->filesp->pwd != NULL) {
+                vop_ref_dec(initproc->filesp->pwd);
+            }
+            initproc->filesp->pwd = node;
+        }
+    }
 }
 
 void
@@ -39,6 +51,7 @@ files_create(void) {
         filesp->pwd = NULL;
         filesp->fd_array = (void *)(filesp + 1);
         filesp->files_count = 0;
+        filesp->files_nlinks = 1;
         sem_init(&(filesp->files_sem), 1);
         fd_array_init(filesp->fd_array);
     }
@@ -81,7 +94,7 @@ int
 dup_files(struct files_struct *to, struct files_struct *from) {
 //    cprintf("[dup_fs]\n");
     assert(to != NULL && from != NULL);
-    assert(files_count(to) == 0 && files_count(from) > 0);
+    assert(files_count(to) == 0);
     if ((to->pwd = from->pwd) != NULL) {
         vop_ref_inc(to->pwd);
     }

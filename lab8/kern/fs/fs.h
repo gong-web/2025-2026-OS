@@ -31,6 +31,7 @@ struct files_struct {
     struct file *fd_array;  // opened files array
     int files_count;        // the number of opened files
     semaphore_t files_sem;  // lock protect sem
+    int files_nlinks;       // number of references to this files_struct
 };
 
 #define FILES_STRUCT_BUFSIZE                       (PGSIZE - sizeof(struct files_struct))

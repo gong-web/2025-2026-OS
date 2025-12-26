@@ -46,6 +46,8 @@ typedef size_t ppn_t;
 /* used for file offsets */
 typedef intptr_t off_t;
 
+#define CHAR_BIT 8
+
 /* *
  * Rounding operations (efficient when n is a power of 2)
  * Round down to the nearest multiple of n
@@ -59,6 +61,12 @@ typedef intptr_t off_t;
 #define ROUNDUP(a, n) ({                                            \
             size_t __n = (size_t)(n);                               \
             (typeof(a))(ROUNDDOWN((size_t)(a) + __n - 1, __n));     \
+        })
+
+/* Round up the result of dividing of n */
+#define ROUNDUP_DIV(a, n) ({                                        \
+            size_t __n = (size_t)(n);                               \
+            (typeof(a))(((size_t)(a) + __n - 1) / __n);             \
         })
 
 /* Return the offset of 'member' relative to the beginning of a struct type */

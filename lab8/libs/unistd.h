@@ -37,6 +37,7 @@
 /* SYS_fork flags */
 #define CLONE_VM            0x00000100  // set if VM shared between processes
 #define CLONE_THREAD        0x00000200  // thread group
+#define CLONE_FILES         0x00000400  // set if open files shared between processes
 
 /* VFS flags */
 // flags for open: choose one of these

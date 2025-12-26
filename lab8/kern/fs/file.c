@@ -17,7 +17,7 @@
 static struct file *
 get_fd_array(void) {
     struct files_struct *filesp = current->filesp;
-    assert(filesp != NULL && files_count(filesp) > 0);
+    assert(filesp != NULL);
     return filesp->fd_array;
 }
 

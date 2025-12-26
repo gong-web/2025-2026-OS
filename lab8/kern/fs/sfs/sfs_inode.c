@@ -645,37 +645,7 @@ out:
     return ret;
 }
 
-    while (nblks > 0) {
-        if ((ret = sfs_bmap_load_nolock(sfs, sin, blkno, &ino)) != 0) {
-            goto out;
-        }
-        if ((ret = sfs_block_op(sfs, buf, ino, 1)) != 0) {
-            goto out;
-        }
-        alen += SFS_BLKSIZE;
-        buf += SFS_BLKSIZE;
-        blkno++;
-        nblks--;
-    }
 
-    if ((size = endpos % SFS_BLKSIZE) != 0) {
-        if ((ret = sfs_bmap_load_nolock(sfs, sin, blkno, &ino)) != 0) {
-            goto out;
-        }
-        if ((ret = sfs_buf_op(sfs, buf, size, ino, 0)) != 0) {
-            goto out;
-        }
-        alen += size;
-    }
-
-out:
-    *alenp = alen;
-    if (offset + alen > sin->din->size) {
-        sin->din->size = offset + alen;
-        sin->dirty = 1;
-    }
-    return ret;
-}
 
 /*
  * sfs_io - Rd/Wr file. the wrapper of sfs_io_nolock

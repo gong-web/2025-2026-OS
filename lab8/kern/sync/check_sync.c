@@ -112,7 +112,7 @@ void phi_put_forks_sema(int i) /* i：哲学家号码从0到N-1 */
 int philosopher_using_semaphore(void * arg) /* i：哲学家号码，从0到N-1 */
 {
     int i, iter=0;
-    i=(int)arg;
+    i=(int)(intptr_t)arg;
     cprintf("I am No.%d philosopher_sema\n",i);
     while(iter++<TIMES)
     { /* 无限循环 */
@@ -217,7 +217,7 @@ void phi_put_forks_condvar(int i) {
 int philosopher_using_condvar(void * arg) { /* arg is the No. of philosopher 0~N-1*/
   
     int i, iter=0;
-    i=(int)arg;
+    i=(int)(intptr_t)arg;
     cprintf("I am No.%d philosopher_condvar\n",i);
     while(iter++<TIMES)
     { /* iterate*/
@@ -242,7 +242,7 @@ void check_sync(void){
     sem_init(&mutex, 1);
     for(i=0;i<N;i++){
         sem_init(&s[i], 0);
-        int pid = kernel_thread(philosopher_using_semaphore, (void *)i, 0);
+        int pid = kernel_thread(philosopher_using_semaphore, (void *)(intptr_t)i, 0);
         if (pid <= 0) {
             panic("create No.%d philosopher_using_semaphore failed.\n");
         }
@@ -257,7 +257,7 @@ void check_sync(void){
     monitor_init(&mt, N);
     for(i=0;i<N;i++){
         state_condvar[i]=THINKING;
-        int pid = kernel_thread(philosopher_using_condvar, (void *)i, 0);
+        int pid = kernel_thread(philosopher_using_condvar, (void *)(intptr_t)i, 0);
         if (pid <= 0) {
             panic("create No.%d philosopher_using_condvar failed.\n");
         }

@@ -9,15 +9,21 @@ BASE_ADDRESS = 0xFFFFFFFFC0200000;
 SECTIONS
 {
     /* Load the kernel at this address: "." means the current address */
-    . = BASE_ADDRESS;
+    . = 0x80200000;
 
-    .text : {
-        *(.text.kern_entry .text .stub .text.* .gnu.linkonce.t.*)
+    .text.kern_entry : {
+        *(.text.kern_entry)
+    }
+
+    . = BASE_ADDRESS + SIZEOF(.text.kern_entry);
+
+    .text : AT(ADDR(.text) - 0xFFFFFFFF40000000) {
+        *(.text .stub .text.* .gnu.linkonce.t.*)
     }
 
     PROVIDE(etext = .); /* Define the 'etext' symbol to this value */
 
-    .rodata : {
+    .rodata : AT(ADDR(.rodata) - 0xFFFFFFFF40000000) {
         *(.rodata .rodata.* .gnu.linkonce.r.*)
     }
 
@@ -25,19 +31,19 @@ SECTIONS
     . = ALIGN(0x1000);
 
     /* The data segment */
-    .data : {
+    .data : AT(ADDR(.data) - 0xFFFFFFFF40000000) {
         *(.data)
         *(.data.*)
     }
 
-    .sdata : {
+    .sdata : AT(ADDR(.sdata) - 0xFFFFFFFF40000000) {
         *(.sdata)
         *(.sdata.*)
     }
 
     PROVIDE(edata = .);
 
-    .bss : {
+    .bss : AT(ADDR(.bss) - 0xFFFFFFFF40000000) {
         *(.bss)
         *(.bss.*)
         *(.sbss*)

@@ -1,4 +1,4 @@
-PROJ	:= lab7
+PROJ	:= lab8
 EMPTY	:=
 SPACE	:= $(EMPTY) $(EMPTY)
 SLASH	:= /
@@ -12,7 +12,7 @@ endif
 
 # try to infer the correct QEMU
 ifndef QEMU
-QEMU := qemu-system-riscv64
+QEMU := sh tools/qemu-wrapper.sh
 endif
 
 ifndef SPIKE
@@ -30,7 +30,7 @@ endif
 HOSTCC		:= gcc
 HOSTCFLAGS	:= -Wall -O2
 
-GDB		:= $(GCCPREFIX)gdb
+GDB		:= sh tools/gdb-wrapper.sh
 
 CC		:= $(GCCPREFIX)gcc
 CFLAGS  := -mcmodel=medany -O2 -std=gnu99 -Wno-unused
@@ -130,6 +130,40 @@ endef
 
 $(foreach p,$(call read_packet,uprog),$(eval $(call uprog_ld,$(p))))
 
+
+# -------------------------------------------------------------------
+
+# create swap.img
+SWAPIMG		:= $(call totarget,swap.img)
+
+$(SWAPIMG):
+	@echo Building $@
+	@mkdir -p $(dir $@)
+	dd if=/dev/zero of=$@ bs=1M count=4
+
+# $(call create_target,swap.img)
+
+# -------------------------------------------------------------------
+
+# create sfs.img
+SFSIMG		:= $(call totarget,sfs.img)
+MKSFS		:= $(call totarget,mksfs)
+
+$(MKSFS): tools/mksfs.c
+	@mkdir -p $(dir $@)
+	$(HOSTCC) $(HOSTCFLAGS) -o $@ $<
+
+$(SFSIMG): $(MKSFS) $(USER_BINS)
+	@echo Building $@
+	@mkdir -p $(dir $@)
+	dd if=/dev/zero of=$@ bs=1M count=8
+	@mkdir -p $(OBJDIR)/rootfs
+	$(V)$(foreach p,$(call read_packet,uprog), \
+		cp $(call ubinfile,$(p)) $(OBJDIR)/rootfs/$(call filename,$(p));)
+	$(V)$(MKSFS) $@ $(OBJDIR)/rootfs
+
+# $(call create_target,sfs.img)
+
 # -------------------------------------------------------------------
 # kernel
 
@@ -155,6 +189,9 @@ KSRCDIR		+= kern/init \
 			   kern/mm \
 			   kern/sync \
 			   kern/fs    \
+			   kern/fs/vfs \
+			   kern/fs/sfs \
+			   kern/fs/devs \
 			   kern/process \
 			   kern/schedule \
 			   kern/syscall
@@ -170,9 +207,9 @@ kernel = $(call totarget,kernel)
 
 $(kernel): tools/kernel.ld
 
-$(kernel): $(KOBJS) $(USER_BINS)
+$(kernel): $(KOBJS) $(USER_BINS) $(SWAPIMG) $(SFSIMG)
 	@echo + ld $@
-	$(V)$(LD) $(LDFLAGS) -T tools/kernel.ld -o $@ $(KOBJS) --format=binary $(USER_BINS) --format=default
+	$(V)$(LD) $(LDFLAGS) -T tools/kernel.ld -o $@ $(KOBJS) --format=binary $(USER_BINS) $(SWAPIMG) $(SFSIMG) --format=default
 	@$(OBJDUMP) -S $@ > $(call asmfile,kernel)
 	@$(OBJDUMP) -t $@ | $(SED) '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $(call symfile,kernel)
 
@@ -191,33 +228,7 @@ $(UCOREIMG): $(kernel)
 
 $(call create_target,ucore.img)
 
-# -------------------------------------------------------------------
 
-# create swap.img
-SWAPIMG		:= $(call totarget,swap.img)
-
-$(SWAPIMG):
-	$(V)dd if=/dev/zero of=$@ bs=1M count=128
-
-$(call create_target,swap.img)
-
-# -------------------------------------------------------------------
-
-# create sfs.img
-SFSIMG		:= $(call totarget,sfs.img)
-MKSFS		:= $(call totarget,mksfs)
-
-$(MKSFS): tools/mksfs.c
-	$(HOSTCC) $(HOSTCFLAGS) -o $@ $<
-
-$(SFSIMG): $(MKSFS) $(USER_BINS)
-	$(V)dd if=/dev/zero of=$@ bs=1M count=128
-	@mkdir -p $(OBJDIR)/rootfs
-	$(V)$(foreach p,$(call read_packet,uprog), \
-		cp $(call ubinfile,$(p)) $(OBJDIR)/rootfs/$(call filename,$(p));)
-	$(V)$(MKSFS) $@ $(OBJDIR)/rootfs
-
-$(call create_target,sfs.img)
 
 # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
@@ -242,16 +253,17 @@ TARGETS: $(TARGETS)
 
 .DEFAULT_GOAL := TARGETS
 
-QEMUOPTS = -hda $(UCOREIMG) -drive file=$(SWAPIMG),media=disk,cache=writeback
+QEMUOPTS = -kernel $(UCOREIMG) -machine virt -bios default -drive file=$(SWAPIMG),media=disk,cache=writeback -drive file=$(SFSIMG),media=disk,cache=writeback
 
 .PHONY: qemu spike
 qemu: $(UCOREIMG) $(SWAPIMG) $(SFSIMG)
-#	$(V)$(QEMU) -kernel $(UCOREIMG) -nographic
-	$(V)$(QEMU) \
-		-machine virt \
-		-nographic \
-		-bios default \
-		-device loader,file=$(UCOREIMG),addr=0x80200000
+	$(V)$(QEMU) -kernel $(UCOREIMG) -nographic -machine virt -bios default
+
+#	$(V)$(QEMU) \
+#		-machine virt \
+#		-nographic \
+#		-bios default \
+#		-device loader,file=$(UCOREIMG),addr=0x80200000
 
 debug: $(UCOREIMG) $(SWAPIMG) $(SFSIMG)
 	$(V)$(QEMU) \
@@ -323,3 +335,7 @@ tags:
 	$(V)find . -type f -name "*.[chS]" >cscope.files
 	$(V)cscope -bq 
 	$(V)ctags -L cscope.files
+
+
+
+
