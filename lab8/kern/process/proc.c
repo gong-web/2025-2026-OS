@@ -1125,6 +1125,31 @@ kernel_execve(const char *name, const char **argv) {
 static int
 user_main(void *arg)
 {
+    /* ============================================
+     * 学号：2311561
+     * 为第一个用户进程初始化标准输入输出
+     * 确保fd 0/1/2分别对应stdin/stdout/stderr
+     * ============================================ */
+    int fd0, fd1, fd2;
+    // 打开标准输入 (fd=0)
+    fd0 = sysfile_open("stdin:", O_RDONLY);
+    if (fd0 < 0) {
+        panic("failed to open stdin: %e\n", fd0);
+    }
+    // 打开标准输出 (fd=1)
+    fd1 = sysfile_open("stdout:", O_WRONLY);
+    if (fd1 < 0) {
+        panic("failed to open stdout: %e\n", fd1);
+    }
+    // 打开标准错误输出 (fd=2)，使用stdout设备
+    fd2 = sysfile_open("stdout:", O_WRONLY);
+    if (fd2 < 0) {
+        panic("failed to open stderr: %e\n", fd2);
+    }
+    
+    cprintf("stdin (fd=%d), stdout (fd=%d), stderr (fd=%d) opened.\n", fd0, fd1, fd2);
+    /* 学号：2311561 - 标准IO初始化完成 */
+    
 #ifdef TEST
     KERNEL_EXECVE2(TEST, TESTSTART, TESTSIZE);
 #else

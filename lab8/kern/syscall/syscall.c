@@ -6,6 +6,10 @@
 #include <pmm.h>
 #include <assert.h>
 #include <clock.h>
+// 学号：2311561 - 添加文件系统相关头文件
+#include <sysfile.h>
+#include <stat.h>
+#include <dirent.h>
 
 static int
 sys_exit(uint64_t arg[]) {
@@ -77,6 +81,84 @@ sys_sleep(uint64_t arg[]) {
     return do_sleep(time);
 }
 
+/* ============================================
+ * 学号：2311561
+ * 以下为新增的文件系统系统调用包装函数
+ * ============================================ */
+
+static int
+sys_open(uint64_t arg[]) {
+    const char *path = (const char *)arg[0];
+    uint32_t open_flags = (uint32_t)arg[1];
+    return sysfile_open(path, open_flags);
+}
+
+static int
+sys_close(uint64_t arg[]) {
+    int fd = (int)arg[0];
+    return sysfile_close(fd);
+}
+
+static int
+sys_read(uint64_t arg[]) {
+    int fd = (int)arg[0];
+    void *base = (void *)arg[1];
+    size_t len = (size_t)arg[2];
+    return sysfile_read(fd, base, len);
+}
+
+static int
+sys_write(uint64_t arg[]) {
+    int fd = (int)arg[0];
+    void *base = (void *)arg[1];
+    size_t len = (size_t)arg[2];
+    return sysfile_write(fd, base, len);
+}
+
+static int
+sys_seek(uint64_t arg[]) {
+    int fd = (int)arg[0];
+    off_t pos = (off_t)arg[1];
+    int whence = (int)arg[2];
+    return sysfile_seek(fd, pos, whence);
+}
+
+static int
+sys_fstat(uint64_t arg[]) {
+    int fd = (int)arg[0];
+    struct stat *stat = (struct stat *)arg[1];
+    return sysfile_fstat(fd, stat);
+}
+
+static int
+sys_fsync(uint64_t arg[]) {
+    int fd = (int)arg[0];
+    return sysfile_fsync(fd);
+}
+
+static int
+sys_getcwd(uint64_t arg[]) {
+    char *buf = (char *)arg[0];
+    size_t len = (size_t)arg[1];
+    return sysfile_getcwd(buf, len);
+}
+
+static int
+sys_getdirentry(uint64_t arg[]) {
+    int fd = (int)arg[0];
+    struct dirent *direntp = (struct dirent *)arg[1];
+    return sysfile_getdirentry(fd, direntp);
+}
+
+static int
+sys_dup(uint64_t arg[]) {
+    int fd1 = (int)arg[0];
+    int fd2 = (int)arg[1];
+    return sysfile_dup(fd1, fd2);
+}
+
+/* 学号：2311561 - 文件系统系统调用包装函数结束 */
+
 static int (*syscalls[])(uint64_t arg[]) = {
     [SYS_exit]              sys_exit,
     [SYS_fork]              sys_fork,
@@ -90,6 +172,17 @@ static int (*syscalls[])(uint64_t arg[]) = {
     [SYS_gettime]           sys_gettime,
     [SYS_lab6_set_priority] sys_lab6_set_priority,
     [SYS_sleep]             sys_sleep,
+    // 学号：2311561 - 注册文件系统相关系统调用
+    [SYS_open]              sys_open,
+    [SYS_close]             sys_close,
+    [SYS_read]              sys_read,
+    [SYS_write]             sys_write,
+    [SYS_seek]              sys_seek,
+    [SYS_fstat]             sys_fstat,
+    [SYS_fsync]             sys_fsync,
+    [SYS_getcwd]            sys_getcwd,
+    [SYS_getdirentry]       sys_getdirentry,
+    [SYS_dup]               sys_dup,
 };
 
 #define NUM_SYSCALLS        ((sizeof(syscalls)) / (sizeof(syscalls[0])))
