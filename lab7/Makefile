@@ -7,7 +7,7 @@ V       := @
 
 # try to infer the correct GCCPREFX
 ifndef GCCPREFIX
-GCCPREFIX := riscv64-unknown-elf-
+GCCPREFIX := riscv64-linux-gnu-
 endif
 
 # try to infer the correct QEMU
@@ -34,6 +34,7 @@ GDB		:= $(GCCPREFIX)gdb
 
 CC		:= $(GCCPREFIX)gcc
 CFLAGS  := -mcmodel=medany -O2 -std=gnu99 -Wno-unused
+CFLAGS	+= -fno-pic -fno-pie
 CFLAGS	+= -fno-builtin -Wall -nostdinc $(DEFS)
 CFLAGS	+= -fno-stack-protector -ffunction-sections -fdata-sections
 CFLAGS	+= -g
@@ -211,16 +212,13 @@ TARGETS: $(TARGETS)
 
 .DEFAULT_GOAL := TARGETS
 
-QEMUOPTS = -hda $(UCOREIMG) -drive file=$(SWAPIMG),media=disk,cache=writeback
+QEMUOPTS = -machine virt \
+		   -bios default \
+		   -device loader,file=bin/ucore.img,addr=0x80200000
 
 .PHONY: qemu spike
-qemu: $(UCOREIMG) $(SWAPIMG) $(SFSIMG)
-#	$(V)$(QEMU) -kernel $(UCOREIMG) -nographic
-	$(V)$(QEMU) \
-		-machine virt \
-		-nographic \
-		-bios default \
-		-device loader,file=$(UCOREIMG),addr=0x80200000
+qemu: $(UCOREIMG)
+	$(V)timeout 10s $(QEMU) $(QEMUOPTS) -nographic
 
 debug: $(UCOREIMG) $(SWAPIMG) $(SFSIMG)
 	$(V)$(QEMU) \

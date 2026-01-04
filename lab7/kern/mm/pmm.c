@@ -93,9 +93,11 @@ static void page_init(void)
     extern char kern_entry[];
 
     va_pa_offset = PHYSICAL_MEMORY_OFFSET;
+    cprintf("page_init: va_pa_offset = %lx\n", va_pa_offset);
 
     uint64_t mem_begin = get_memory_base();
     uint64_t mem_size  = get_memory_size();
+    cprintf("page_init: mem_begin = %lx, mem_size = %lx\n", mem_begin, mem_size);
     if (mem_size == 0) {
         panic("DTB memory info not available");
     }

@@ -146,6 +146,7 @@ uint64_t get_memory_base(void) {
 }
 
 uint64_t get_memory_size(void) {
+    cprintf("get_memory_size called, returning %lx\n", memory_size);
     return memory_size;
 }
 

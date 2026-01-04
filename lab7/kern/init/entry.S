@@ -6,18 +6,16 @@
 kern_entry:
     # a0: hartid
     # a1: dtb physical address
-    # save hartid and dtb address
-    la t0, boot_hartid
-    sd a0, 0(t0)
-    la t0, boot_dtb
-    sd a1, 0(t0)
 
-    # t0 := 三级页表的虚拟地址
-    lui     t0, %hi(boot_page_table_sv39)
-    # t1 := 0xffffffff40000000 即虚实映射偏移量
-    li      t1, 0xffffffffc0000000 - 0x80000000
-    # t0 减去虚实映射偏移量 0xffffffff40000000，变为三级页表的物理地址
-    sub     t0, t0, t1
+    # save hartid and dtb address
+    # With -fno-pic, 'la' uses PC-relative addressing which works for physical addresses here.
+    la      t0, boot_hartid
+    sd      a0, 0(t0)
+    la      t0, boot_dtb
+    sd      a1, 0(t0)
+
+    # t0 := 三级页表的物理地址
+    la      t0, boot_page_table_sv39
     # t0 >>= 12，变为三级页表的物理页号
     srli    t0, t0, 12
 
@@ -29,20 +27,20 @@ kern_entry:
     csrw    satp, t0
     # 使用 sfence.vma 指令刷新 TLB
     sfence.vma
-    # 从此，我们给内核搭建出了一个完美的虚拟内存空间！
-    #nop # 可能映射的位置有些bug。。插入一个nop
-    
+
     # 我们在虚拟内存空间中：随意将 sp 设置为虚拟地址！
-    lui sp, %hi(bootstacktop)
+    la      sp, bootstacktop
+    li      t0, 0xffffffff40000000
+    add     sp, sp, t0
 
     # 我们在虚拟内存空间中：随意跳转到虚拟地址！
     # 跳转到 kern_init
-    lui t0, %hi(kern_init)
-    addi t0, t0, %lo(kern_init)
-    jr t0
+    la      t0, kern_init
+    li      t1, 0xffffffff40000000
+    add     t0, t0, t1
+    jr      t0
 
 .section .data
-    # .align 2^12
     .align PGSHIFT
     .global bootstack
 bootstack:
@@ -56,10 +54,11 @@ bootstacktop:
     .global boot_page_table_sv39
 # 分配 4KiB 内存给预设的三级页表
 boot_page_table_sv39:
+    # 0x00000000_80000000 map to 0x80000000 (1G)
+    .zero 8 * 2
+    .quad (0x80000 << 10) | 0xcf # VRWXAD
+    .zero 8 * 508
     # 0xffffffff_c0000000 map to 0x80000000 (1G)
-    # 前 511 个页表项均设置为 0 ，因此 V=0 ，意味着是空的(unmapped)
-    .zero 8 * 511
-    # 设置最后一个页表项，PPN=0x80000，标志位 VRWXAD 均为 1
     .quad (0x80000 << 10) | 0xcf # VRWXAD
 
     .global boot_hartid
