@@ -127,10 +127,10 @@ make grade
     ```bash
     # 进入对应实验目录，例如 lab4
     cd lab4
-
+    
     # 编译
     make
-
+    
     # 在 QEMU 中运行
     make qemu
     ```
